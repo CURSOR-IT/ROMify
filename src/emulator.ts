@@ -34,6 +34,7 @@ export async function startGame(
   mount: HTMLElement,
   signedIn: boolean,
   onStatus: (msg: string) => void,
+  onReady?: () => void,
 ): Promise<Session> {
   mount.innerHTML = '<div id="ejs"></div>';
 
@@ -52,6 +53,7 @@ export async function startGame(
   w.EJS_gameID = game.key;
   w.EJS_pathtodata = DATA_PATH;
   w.EJS_startOnLoaded = true;
+  w.EJS_onGameStart = () => onReady?.(); // Spiel läuft: Ladeanzeige ausblenden
   w.EJS_color = "#a855f7";
   if (stateUrl) w.EJS_loadStateURL = stateUrl;
   else delete w.EJS_loadStateURL;

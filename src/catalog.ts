@@ -52,7 +52,32 @@ export async function coverUrls(items: CatalogRom[]): Promise<Map<string, string
   return out;
 }
 
-export async function downloadCatalogRom(rom: CatalogRom): Promise<Blob> {
+export async function downloadCatalogRom(rom: CatalogRom, onProgress?: (fraction: number) => void): Promise<Blob> {
+  if (onProgress) {
+    // Streaming-Download über eine kurzlebige signierte URL, damit ein Fortschritt angezeigt werden kann.
+    try {
+      const signed = await supabase.storage.from("catalog").createSignedUrl(rom.file_path, 300);
+      if (signed.data?.signedUrl) {
+        const res = await fetch(signed.data.signedUrl);
+        if (res.ok && res.body) {
+          const total = Number(res.headers.get("content-length")) || rom.size;
+          const reader = res.body.getReader();
+          const chunks: Uint8Array[] = [];
+          let got = 0;
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            got += value.length;
+            onProgress(Math.min(1, got / total));
+          }
+          return new Blob(chunks as BlobPart[], { type: "application/octet-stream" });
+        }
+      }
+    } catch {
+      /* Fallback unten */
+    }
+  }
   const { data, error } = await supabase.storage.from("catalog").download(rom.file_path);
   if (error || !data) throw error ?? new Error("Download fehlgeschlagen");
   return data;
