@@ -1,5 +1,20 @@
--- ROMify: Registrierungen müssen von einem Admin freigeschaltet werden.
--- Reihenfolge: schema.sql -> catalog.sql -> approval.sql (wiederholbar).
+-- ROMify: Admins und Freischaltung neuer Registrierungen.
+-- Reihenfolge: schema.sql -> approval.sql (wiederholbar).
+
+-- Admins (werden nur per SQL gesetzt, siehe Kommentar am Dateiende)
+create table if not exists public.admins (
+  user_id uuid primary key references auth.users(id) on delete cascade
+);
+alter table public.admins enable row level security;
+drop policy if exists "read own admin row" on public.admins;
+create policy "read own admin row" on public.admins for select using (auth.uid() = user_id);
+
+create or replace function public.is_admin() returns boolean
+language sql security definer set search_path = public stable as $$
+  select exists (select 1 from public.admins where user_id = auth.uid());
+$$;
+revoke all on function public.is_admin() from public;
+grant execute on function public.is_admin() to authenticated;
 
 create table if not exists public.profiles (
   user_id    uuid primary key references auth.users(id) on delete cascade,
@@ -54,17 +69,6 @@ create policy "own achievements" on public.achievements for all
   using (auth.uid() = user_id and public.is_approved())
   with check (auth.uid() = user_id and public.is_approved());
 
-drop policy if exists "catalog read" on public.catalog_roms;
-create policy "catalog read" on public.catalog_roms for select to authenticated using (public.is_approved());
-
-drop policy if exists "report insert" on public.catalog_reports;
-create policy "report insert" on public.catalog_reports for insert to authenticated
-  with check (auth.uid() = user_id and public.is_approved());
-
-drop policy if exists "catalog files read" on storage.objects;
-create policy "catalog files read" on storage.objects for select to authenticated
-  using (bucket_id = 'catalog' and public.is_approved());
-
 drop policy if exists "own saves read"   on storage.objects;
 drop policy if exists "own saves write"  on storage.objects;
 drop policy if exists "own saves update" on storage.objects;
@@ -79,3 +83,6 @@ create policy "own saves delete" on storage.objects for delete
   using (bucket_id = 'saves' and (storage.foldername(name))[1] = auth.uid()::text and public.is_approved());
 
 notify pgrst, 'reload schema';
+
+-- Ersten Admin festlegen (E-Mail anpassen, dann diese Zeile separat ausführen):
+-- insert into public.admins (user_id) select id from auth.users where email = 'DEINE@EMAIL.DE' on conflict do nothing;

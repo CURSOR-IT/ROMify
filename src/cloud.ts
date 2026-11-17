@@ -12,8 +12,6 @@ export interface CloudGame {
   system: string;
   playtime_sec: number;
   last_played: string;
-  added_at: string;
-  catalog_id: string | null;
 }
 
 export async function currentUser() {
@@ -78,30 +76,6 @@ export async function unlock(code: string) {
   await supabase.from("achievements").upsert({ user_id: user.id, code }, { onConflict: "user_id,code", ignoreDuplicates: true });
 }
 
-// Supabase Free-Tier: max. 50 MB pro Datei (Katalog-Uploads durch Admins)
-export const ROM_LIMIT = 50 * 1024 * 1024;
-
-// ---- Bibliothek: nur Verweise auf Katalogeinträge, keine ROM-Dateien ----
-export async function addToLibrary(rom: { id: string; title: string; system: string }) {
-  const user = await currentUser();
-  if (!user) throw new Error("Nicht angemeldet");
-  const { error } = await supabase.from("games").upsert({
-    user_id: user.id,
-    game_key: rom.id,
-    title: rom.title,
-    system: rom.system,
-    catalog_id: rom.id,
-  });
-  if (error) throw error;
-}
-
-export async function removeFromLibrary(key: string) {
-  const user = await currentUser();
-  if (!user) return;
-  const { error } = await supabase.from("games").delete().eq("user_id", user.id).eq("game_key", key);
-  if (error) throw error;
-}
-
 // ---- Freischaltung neuer Konten ----
 export interface Profile {
   user_id: string;
@@ -134,4 +108,11 @@ export async function setApproved(userId: string, approved: boolean) {
 export async function countPending(): Promise<number> {
   const { count } = await supabase.from("profiles").select("user_id", { count: "exact", head: true }).eq("approved", false);
   return count ?? 0;
+}
+
+export async function isAdmin(): Promise<boolean> {
+  const user = await currentUser();
+  if (!user) return false;
+  const { data } = await supabase.from("admins").select("user_id").eq("user_id", user.id).maybeSingle();
+  return Boolean(data);
 }
