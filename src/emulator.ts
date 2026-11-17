@@ -45,7 +45,7 @@ export async function startGame(
   w.EJS_gameID = game.key;
   w.EJS_pathtodata = DATA_PATH;
   w.EJS_startOnLoaded = true;
-  w.EJS_color = "#6c5ce7";
+  w.EJS_color = "#a855f7";
   if (stateUrl) w.EJS_loadStateURL = stateUrl;
   else delete w.EJS_loadStateURL;
 
