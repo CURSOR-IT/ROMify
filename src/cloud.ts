@@ -4,7 +4,7 @@ const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const anon = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY) as string | undefined;
 
 export const cloudConfigured = Boolean(url && anon);
-export const supabase = createClient(url ?? "http://localhost", anon ?? "anon");
+export const supabase = createClient(url || "http://localhost", anon || "anon");
 
 export interface CloudGame {
   game_key: string;
@@ -12,6 +12,9 @@ export interface CloudGame {
   system: string;
   playtime_sec: number;
   last_played: string;
+  filename?: string | null;
+  rom_path?: string | null;
+  rom_size?: number | null;
 }
 
 export async function currentUser() {
@@ -74,4 +77,45 @@ export async function unlock(code: string) {
   const user = await currentUser();
   if (!user) return;
   await supabase.from("achievements").upsert({ user_id: user.id, code }, { onConflict: "user_id,code", ignoreDuplicates: true });
+}
+
+// ---- Privater ROM-Speicher (nur der eigene Nutzer kann lesen/schreiben, per RLS) ----
+export const ROM_LIMIT = 50 * 1024 * 1024; // Supabase Free-Tier: 50 MB pro Datei
+
+export async function uploadRom(
+  key: string,
+  blob: Blob,
+  meta: { title: string; core: string; filename: string },
+  cover?: Blob,
+) {
+  const user = await currentUser();
+  if (!user) throw new Error("Nicht angemeldet");
+  if (blob.size > ROM_LIMIT) {
+    throw new Error(`Datei zu groß (${(blob.size / 1048576).toFixed(0)} MB). Im kostenlosen Tarif sind max. 50 MB erlaubt.`);
+  }
+  const path = `${user.id}/${key}/rom.bin`;
+  const up = await supabase.storage.from("roms").upload(path, blob, { upsert: true, contentType: "application/octet-stream" });
+  if (up.error) throw up.error;
+  if (cover) await supabase.storage.from("roms").upload(`${user.id}/${key}/cover`, cover, { upsert: true, contentType: cover.type || "image/png" });
+  const { error } = await supabase.from("games").upsert({
+    user_id: user.id,
+    game_key: key,
+    title: meta.title,
+    system: meta.core,
+    filename: meta.filename,
+    rom_path: path,
+    rom_size: blob.size,
+  });
+  if (error) throw error;
+}
+
+export async function downloadRom(path: string): Promise<Blob> {
+  const { data, error } = await supabase.storage.from("roms").download(path);
+  if (error || !data) throw error ?? new Error("Download fehlgeschlagen");
+  return data;
+}
+
+export async function downloadCover(path: string): Promise<Blob | null> {
+  const { data } = await supabase.storage.from("roms").download(path.replace(/rom\.bin$/, "cover"));
+  return data ?? null;
 }

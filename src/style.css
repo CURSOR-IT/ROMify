@@ -1,23 +1,77 @@
 :root {
-  --bg: #0f1115; --panel: #181b22; --line: #2a2f3a; --text: #e8eaf0; --muted: #8a91a3; --accent: #a855f7; --cyan: #22d3ee; --magenta: #d946ef;
+  --bg: #0b0d12; --panel: rgba(20, 23, 32, .72); --line: rgba(255, 255, 255, .12); --text: #eef0f6; --muted: #a0a7ba;
+  --accent: #a855f7; --cyan: #22d3ee; --magenta: #d946ef;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, sans-serif; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-h1 { margin: 0; font-size: 1.4rem; font-weight: 800; background: linear-gradient(90deg, var(--cyan), var(--magenta)); -webkit-background-clip: text; background-clip: text; color: transparent; } h2 { font-size: 1.05rem; margin: 0 0 8px; }
-main { max-width: 760px; margin: 0 auto; padding: 16px; display: grid; gap: 24px; }
+html { background: var(--bg); }
+body { margin: 0; color: var(--text); font: 16px/1.45 system-ui, sans-serif; min-height: 100vh; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+#bg { position: fixed; inset: -40px; z-index: 0; background: center / cover no-repeat; filter: blur(34px) brightness(.35) saturate(1.3); transform: scale(1.08); transition: background-image .4s; }
+#app { position: relative; z-index: 1; }
+a { color: inherit; text-decoration: none; }
 .muted { color: var(--muted); font-size: .9rem; }
-button, input { font: inherit; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 10px 14px; min-height: 44px; }
-button { cursor: pointer; } button.primary { background: linear-gradient(90deg, #0ea5c6, var(--magenta)); border-color: transparent; }
-.drop { display: grid; gap: 4px; place-items: center; text-align: center; padding: 24px; border: 2px dashed var(--line); border-radius: 14px; cursor: pointer; }
-.games, .ach { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
-.games li, .ach li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
-.ach { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); } .ach li { display: block; opacity: .55; } .ach li.on { opacity: 1; border-color: var(--accent); }
+h2 { font-size: 1.1rem; margin: 0 0 10px; }
+button, input { font: inherit; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 10px 14px; min-height: 44px; backdrop-filter: blur(8px); }
+button { cursor: pointer; }
+button.primary { background: linear-gradient(90deg, #0ea5c6, var(--magenta)); border-color: transparent; }
+
+/* Kopfzeile */
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: rgba(11, 13, 18, .55); backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 5; }
+.brand { font-size: 1.4rem; font-weight: 800; background: linear-gradient(90deg, var(--cyan), var(--magenta)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.top nav { display: flex; gap: 4px; }
+.top nav a { padding: 8px 14px; border-radius: 999px; color: var(--muted); }
+.top nav a.on { color: var(--text); background: var(--panel); }
+
+main { max-width: 980px; margin: 0 auto; padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
+main > * { min-width: 0; }
+body { overflow-x: hidden; }
+.drop { display: grid; gap: 4px; place-items: center; text-align: center; padding: 20px; border: 2px dashed var(--line); border-radius: 16px; cursor: pointer; background: var(--panel); backdrop-filter: blur(8px); }
+
+/* Reihen mit Karten */
+.scroller { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x proximity; padding: 2px 2px 10px; -webkit-overflow-scrolling: touch; }
+.card { flex: 0 0 148px; scroll-snap-align: start; display: grid; gap: 4px; text-align: left; padding: 0; background: none; border: 0; backdrop-filter: none; min-height: 0; }
+.card .art { aspect-ratio: 1; border-radius: 14px; background-size: cover; background-position: center; display: grid; place-items: center; position: relative; border: 1px solid var(--line); box-shadow: 0 6px 18px rgba(0, 0, 0, .45); }
+.card .art span { font-size: 2rem; font-weight: 800; color: rgba(255, 255, 255, .9); }
+.card .sys { position: absolute; left: 6px; bottom: 6px; font-style: normal; font-size: .68rem; background: rgba(0, 0, 0, .6); padding: 2px 7px; border-radius: 999px; }
+.card b { font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card small { color: var(--muted); }
+.card:hover .art, .card:focus-visible .art { outline: 2px solid var(--cyan); }
+
+.suggest { margin-top: 10px; padding: 12px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); display: grid; gap: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 4px 10px; border-radius: 999px; background: rgba(255, 255, 255, .08); font-size: .85rem; }
+
+/* Bibliothek */
+.group { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(8px); }
+.group summary { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; cursor: pointer; }
+.count { background: rgba(255, 255, 255, .1); padding: 2px 10px; border-radius: 999px; font-size: .85rem; }
+.games { list-style: none; padding: 0 10px 10px; margin: 0; display: grid; gap: 8px; }
+.games li { display: flex; align-items: center; gap: 12px; padding: 8px; background: rgba(0, 0, 0, .25); border: 1px solid var(--line); border-radius: 12px; }
+.thumb { width: 52px; height: 52px; flex: none; border-radius: 10px; background-size: cover; background-position: center; }
+.info { flex: 1; min-width: 0; } .info b { overflow-wrap: anywhere; }
 .row { display: flex; gap: 8px; }
-dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 14px; width: min(92vw, 380px); }
-dialog form { display: grid; gap: 10px; }
-.player { position: fixed; inset: 0; display: flex; flex-direction: column; background: #000; }
+.badge { font-size: .75rem; color: var(--cyan); }
+main > .games { padding: 0; }
+
+.ach { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
+.ach li { padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; opacity: .55; }
+.ach li.on { opacity: 1; border-color: var(--accent); }
+
+/* Fußzeile: Emulatoren */
+.emus { max-width: 980px; margin: 8px auto 0; padding: 24px 16px 40px; border-top: 1px solid var(--line); }
+.emus ul { list-style: none; padding: 0; margin: 0 0 10px; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.emus li { display: grid; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+
+/* Login */
+.login { min-height: 100vh; display: grid; align-content: center; justify-items: center; gap: 18px; padding: 24px 16px; }
+.login-logo { width: min(92vw, 520px); height: auto; border-radius: 20px; box-shadow: 0 10px 50px rgba(168, 85, 247, .35); }
+.glass { width: min(92vw, 380px); display: grid; gap: 10px; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; backdrop-filter: blur(16px); }
+.glass h2 { margin: 0 0 4px; }
+
+/* Player */
+.player { position: fixed; inset: 0; display: flex; flex-direction: column; background: #000; z-index: 20; }
 .player .bar { display: flex; gap: 12px; align-items: center; padding: 6px 10px; background: var(--bg); }
 #screen { flex: 1; min-height: 0; } #ejs { width: 100%; height: 100%; }
-.logo { width: 100%; max-width: 420px; height: auto; margin: 0 auto; display: block; border-radius: 16px; }
+
+@media (max-width: 480px) { .top nav a { padding: 8px 10px; } .games li { flex-wrap: wrap; } .row { width: 100%; } .row .primary { flex: 1; } }
+@media (prefers-reduced-motion: reduce) { #bg { transition: none; } }

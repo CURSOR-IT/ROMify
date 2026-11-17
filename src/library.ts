@@ -7,6 +7,8 @@ export interface LocalGame {
   filename: string;
   file: Blob;
   addedAt: number;
+  lastPlayed?: number;
+  cover?: Blob;
 }
 
 const DB = "romify";
