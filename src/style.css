@@ -150,3 +150,4 @@ dialog.ask .row { display: flex; gap: 8px; } dialog.ask .row button { flex: 1; }
 .authmsg { display: none; padding: 10px 12px; border-radius: 12px; background: rgba(255, 120, 120, .12); border: 1px solid rgba(255, 120, 120, .4); color: #ffb3b3; font-size: .92rem; }
 .authmsg.on { display: block; } .authmsg a, .switch a { color: var(--cyan); font-weight: 600; }
 .switch { text-align: center; }
+.pending { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 999px; background: #ff4d4d; color: #fff; font-size: .75rem; font-weight: 800; text-align: center; margin-left: 4px; }

@@ -4,9 +4,13 @@ import {
   addToLibrary,
   cloudConfigured,
   currentUser,
+  countPending,
   listAchievements,
   listCloudGames,
+  listProfiles,
+  myApproval,
   removeFromLibrary,
+  setApproved,
   supabase,
   unlock,
   type CloudGame,
@@ -51,8 +55,11 @@ let adminView = (() => {
     return true;
   }
 })();
+let approved = true; // false = Konto wartet auf Freischaltung
+let pendingCount = 0; // offene Registrierungen (nur für Admins)
 async function refreshAdmin() {
   isAdminUser = signedIn ? await isAdmin().catch(() => false) : false;
+  approved = !signedIn || isAdminUser ? true : (await myApproval().catch(() => "approved" as const)) === "approved";
   adminChecked = true;
 }
 
@@ -160,7 +167,7 @@ const catalogHint = '<a href="#/catalog">Hol dir Spiele aus dem Katalog →</a>'
 function header(active: "home" | "library" | "catalog" | "admin") {
   return `<header class="top">
     <a class="brand" href="#/">ROMify</a>
-    <nav><a href="#/" class="${active === "home" ? "on" : ""}">Start</a><a href="#/catalog" class="${active === "catalog" ? "on" : ""}">Katalog</a><a href="#/library" class="${active === "library" ? "on" : ""}">Bibliothek</a>${isAdminUser && adminView ? `<a href="#/admin" class="admintab ${active === "admin" ? "on" : ""}">🛡️ Admin</a>` : ""}</nav>
+    <nav><a href="#/" class="${active === "home" ? "on" : ""}">Start</a><a href="#/catalog" class="${active === "catalog" ? "on" : ""}">Katalog</a><a href="#/library" class="${active === "library" ? "on" : ""}">Bibliothek</a>${isAdminUser && adminView ? `<a href="#/admin" class="admintab ${active === "admin" ? "on" : ""}">🛡️ Admin${pendingCount ? ` <span class="pending">${pendingCount}</span>` : ""}</a>` : ""}</nav>
     <div class="acct">${
       isAdminUser
         ? `<button id="adminToggle" class="admintoggle ${adminView ? "is-admin" : "is-user"}" title="Ansicht wechseln: Admin / Benutzer" aria-pressed="${adminView}">${adminView ? "ADMIN" : "USER"}</button>`
@@ -190,7 +197,7 @@ function renderLogin(mode: "in" | "up" = "in", pending = "") {
     app.innerHTML = `<div class="login">${logo}
       <div class="glass up">
         <h2>📬 Fast geschafft!</h2>
-        <p>Wir haben eine Bestätigungs-E-Mail an <b>${esc(pending)}</b> geschickt. Klicke auf den Link in der Mail, danach kannst du dich anmelden.</p>
+        <p>Wir haben eine Bestätigungs-E-Mail an <b>${esc(pending)}</b> geschickt. Klicke auf den Link in der Mail und melde dich danach an. Bevor du spielen kannst, muss ein Admin dein Konto noch freischalten.</p>
         <p class="muted">Nichts angekommen? Schau auch im Spam-Ordner nach.</p>
         <button id="togin" class="primary">Zur Anmeldung</button>
       </div></div>`;
@@ -216,7 +223,7 @@ function renderLogin(mode: "in" | "up" = "in", pending = "") {
         </div>
         <form id="authform" novalidate>
           <h2>${up ? "Konto erstellen" : "Willkommen zurück"}</h2>
-          <p class="muted">${up ? "Neu hier? Erstelle kostenlos ein Konto, damit deine Spielstände und Erfolge auf jedem Gerät gespeichert werden." : "Melde dich mit deinem bestehenden Konto an."}</p>
+          <p class="muted">${up ? "Neu hier? Erstelle kostenlos ein Konto, damit deine Spielstände und Erfolge auf jedem Gerät gespeichert werden. Ein Admin schaltet dein Konto danach frei." : "Melde dich mit deinem bestehenden Konto an."}</p>
           <label class="field">E-Mail<input name="email" type="email" required autocomplete="email" value="${esc(authEmail)}" /></label>
           ${pw("password", up ? "Passwort wählen (mind. 8 Zeichen)" : "Passwort", up ? "new-password" : "current-password", up ? 8 : 1)}
           ${up ? pw("password2", "Passwort wiederholen", "new-password", 8) : ""}
@@ -290,6 +297,25 @@ function renderLogin(mode: "in" | "up" = "in", pending = "") {
       btn.disabled = false;
     }
   });
+}
+
+/* ---------- Konto wartet auf Freischaltung ---------- */
+function renderPending() {
+  bg.style.backgroundImage = `url(${LOGO})`;
+  app.innerHTML = `<div class="login">
+    <img class="login-logo" src="${LOGO}" alt="ROMify – Web-based Emulator" />
+    <div class="glass up">
+      <h2>⏳ Freischaltung ausstehend</h2>
+      <p>Dein Konto wurde erstellt, muss aber noch von einem Admin freigeschaltet werden. Das kann einen Moment dauern.</p>
+      <p class="muted">Du kannst diese Seite offen lassen oder später wiederkommen und erneut prüfen.</p>
+      <button id="recheck" class="primary">Erneut prüfen</button>
+      <button id="logout">Abmelden</button>
+    </div></div>`;
+  document.getElementById("recheck")!.addEventListener("click", async () => {
+    adminChecked = false;
+    await render();
+  });
+  wireCommon();
 }
 
 /* ---------- Hauptmenü ---------- */
@@ -452,6 +478,11 @@ async function renderAdmin() {
   }
   const d = await load();
   const reports = await listReports().catch(() => []);
+  const profiles = await listProfiles().catch(() => []);
+  const me = await currentUser();
+  const waiting = profiles.filter((p) => !p.approved);
+  const members = profiles.filter((p) => p.approved && p.user_id !== me?.id);
+  const when = (iso: string) => new Date(iso).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
   setBackground(d);
   const items = d.catalog;
   const coreOptions = CORE_ORDER.map((c) => `<option value="${c}">${esc(CORE_LABELS[c])}</option>`).join("");
@@ -460,6 +491,29 @@ async function renderAdmin() {
   <main>
     ${adminFlash ? `<p class="ok">${esc(adminFlash)}</p>` : ""}
     ${d.err ? `<p class="warn">Daten konnten nicht geladen werden: ${esc(d.err)}</p>` : ""}
+    <section>
+      <h2>Registrierungen <span class="count">${waiting.length}</span></h2>
+      ${
+        waiting.length
+          ? `<ul class="games">${waiting
+              .map(
+                (u) => `<li><div class="info"><b>${esc(u.email ?? "Unbekannt")}</b><br><span class="muted">registriert am ${when(u.created_at)}</span></div>
+              <div class="row"><button data-approve="${u.user_id}" class="primary">Freischalten</button></div></li>`,
+              )
+              .join("")}</ul>`
+          : '<p class="muted">Keine offenen Anfragen. 🎉</p>'
+      }
+      ${
+        members.length
+          ? `<details class="group"><summary><b>Freigeschaltete Nutzer</b><span class="count">${members.length}</span></summary><ul class="games">${members
+              .map(
+                (u) => `<li><div class="info"><b>${esc(u.email ?? "Unbekannt")}</b><br><span class="muted">seit ${when(u.decided_at ?? u.created_at)}</span></div>
+              <div class="row"><button data-block="${u.user_id}" title="Zugang sperren">Sperren</button></div></li>`,
+              )
+              .join("")}</ul></details>`
+          : ""
+      }
+    </section>
     <section>
       <h2>ROM hinzufügen</h2>
       <form id="adminform" class="adminform panel">
@@ -517,6 +571,29 @@ async function renderAdmin() {
       if (!rom || !confirm(`„${rom.title}“ endgültig aus dem Katalog löschen?`)) return;
       try {
         await adminDelete(rom);
+        await render();
+      } catch (e) {
+        alert((e as Error).message);
+      }
+    }),
+  );
+  app.querySelectorAll<HTMLElement>("[data-approve]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.textContent = "…";
+      try {
+        await setApproved(b.dataset.approve!, true);
+        await render();
+      } catch (e) {
+        b.textContent = "Freischalten";
+        alert((e as Error).message);
+      }
+    }),
+  );
+  app.querySelectorAll<HTMLElement>("[data-block]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!confirm("Zugang dieses Nutzers sperren? Er sieht dann wieder die Freischaltungs-Seite.")) return;
+      try {
+        await setApproved(b.dataset.block!, false);
         await render();
       } catch (e) {
         alert((e as Error).message);
@@ -698,6 +775,8 @@ async function renderRoute() {
     return renderLogin();
   }
   if (signedIn && !adminChecked) await refreshAdmin();
+  if (signedIn && !approved) return renderPending();
+  if (isAdminUser) pendingCount = await countPending().catch(() => 0);
   if (location.hash.startsWith("#/admin")) return renderAdmin();
   if (location.hash.startsWith("#/catalog")) return renderCatalog();
   return location.hash.startsWith("#/library") ? renderLibrary() : renderHome();
