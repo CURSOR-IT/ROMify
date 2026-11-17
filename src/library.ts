@@ -9,6 +9,7 @@ export interface LocalGame {
   addedAt: number;
   lastPlayed?: number;
   cover?: Blob;
+  catalogId?: string;
 }
 
 const DB = "romify";

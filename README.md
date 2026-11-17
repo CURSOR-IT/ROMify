@@ -14,6 +14,13 @@ Webbasierter Retro-Emulator für Handy und PC. Login per E-Mail, Spielstände un
 2. `.env.example` nach `.env` kopieren und `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` setzen.
 3. `npm install && npm run dev`
 
+## ROM-Katalog (Admins laden hoch, Nutzer sehen)
+- Der Katalog enthält **ausschließlich selbst erstellte oder frei lizenzierte ROMs** (Homebrew). Er ist leer, es wird nichts mitgeliefert.
+- Einspielen: `supabase/catalog.sql` im SQL Editor ausführen (wiederholbar). Dann den ersten Admin setzen (Zeile am Dateiende, E-Mail anpassen).
+- Nur Admins können hochladen und löschen (Row-Level-Security über `public.is_admin()`). Angemeldete Nutzer lesen und laden Einträge in ihre Bibliothek.
+- Pflichtangaben je Eintrag: Autor, Lizenz und Rechte-Bestätigung. Nutzer können Einträge über ⚑ melden, Admins sehen die Meldungen im Katalog und können löschen.
+- Admins sind verantwortlich für die hochgeladenen Inhalte.
+
 ## Bekannte Grenzen
 
 - Cloud-Sync nutzt Save States, die an den Core gebunden sind. Core-Updates können alte States ungültig machen.
