@@ -169,46 +169,125 @@ function header(active: "home" | "library" | "catalog" | "admin") {
   </header>`;
 }
 
-/* ---------- Login ---------- */
-function renderLogin() {
+/* ---------- Login / Registrieren (zwei klar getrennte Reiter) ---------- */
+let authEmail = "";
+
+function authError(msg: string): string {
+  const m = msg.toLowerCase();
+  if (m.includes("invalid login")) return "E-Mail oder Passwort stimmt nicht. Hast du noch kein Konto? Wechsle zu „Registrieren“.";
+  if (m.includes("not confirmed")) return "Bitte bestätige zuerst deine E-Mail-Adresse. Den Link findest du in der Mail, die wir dir geschickt haben.";
+  if (m.includes("already registered")) return "Diese E-Mail ist schon registriert. Bitte melde dich an.";
+  if (m.includes("rate limit") || m.includes("too many")) return "Zu viele Versuche. Bitte warte einen Moment und versuche es dann noch einmal.";
+  if (m.includes("password") && m.includes("least")) return "Das Passwort ist zu kurz.";
+  return msg;
+}
+
+function renderLogin(mode: "in" | "up" = "in", pending = "") {
   bg.style.backgroundImage = `url(${LOGO})`;
+  const logo = `<img class="login-logo" src="${LOGO}" alt="ROMify – Web-based Emulator" />`;
+
+  if (pending) {
+    app.innerHTML = `<div class="login">${logo}
+      <div class="glass up">
+        <h2>📬 Fast geschafft!</h2>
+        <p>Wir haben eine Bestätigungs-E-Mail an <b>${esc(pending)}</b> geschickt. Klicke auf den Link in der Mail, danach kannst du dich anmelden.</p>
+        <p class="muted">Nichts angekommen? Schau auch im Spam-Ordner nach.</p>
+        <button id="togin" class="primary">Zur Anmeldung</button>
+      </div></div>`;
+    document.getElementById("togin")!.addEventListener("click", () => {
+      authEmail = pending;
+      renderLogin("in");
+    });
+    return;
+  }
+
+  const up = mode === "up";
+  const pw = (name: string, label: string, auto: string, min: number) => `
+    <label class="field">${label}
+      <span class="pwrow"><input name="${name}" type="password" required minlength="${min}" autocomplete="${auto}" />
+      <button type="button" class="eye" data-eye aria-label="Passwort anzeigen">👁</button></span>
+    </label>`;
   app.innerHTML = `
-    <div class="login">
-      <img class="login-logo" src="${LOGO}" alt="ROMify – Web-based Emulator" />
-      <form id="loginform" class="glass">
-        <h2>Willkommen zurück</h2>
-        <input name="email" type="email" placeholder="E-Mail" required autocomplete="email" />
-        <input name="password" type="password" placeholder="Passwort (min. 6 Zeichen)" required minlength="6" autocomplete="current-password" />
-        <div id="loginmsg" class="muted" role="status"></div>
-        <button class="primary" type="submit">Anmelden</button>
-        <button type="button" id="signup">Neues Konto erstellen</button>
-      </form>
+    <div class="login">${logo}
+      <div class="glass ${up ? "up" : "in"}">
+        <div class="tabs" role="tablist">
+          <button type="button" role="tab" data-mode="in" aria-selected="${!up}">Anmelden</button>
+          <button type="button" role="tab" data-mode="up" aria-selected="${up}">Registrieren</button>
+        </div>
+        <form id="authform" novalidate>
+          <h2>${up ? "Konto erstellen" : "Willkommen zurück"}</h2>
+          <p class="muted">${up ? "Neu hier? Erstelle kostenlos ein Konto, damit deine Spielstände und Erfolge auf jedem Gerät gespeichert werden." : "Melde dich mit deinem bestehenden Konto an."}</p>
+          <label class="field">E-Mail<input name="email" type="email" required autocomplete="email" value="${esc(authEmail)}" /></label>
+          ${pw("password", up ? "Passwort wählen (mind. 8 Zeichen)" : "Passwort", up ? "new-password" : "current-password", up ? 8 : 1)}
+          ${up ? pw("password2", "Passwort wiederholen", "new-password", 8) : ""}
+          <div id="authmsg" class="authmsg" role="alert"></div>
+          <button class="primary" type="submit">${up ? "Konto erstellen" : "Anmelden"}</button>
+          <p class="switch muted">${up ? 'Schon registriert? <a href="#" id="switch">Zur Anmeldung</a>' : 'Noch kein Konto? <a href="#" id="switch">Jetzt registrieren</a>'}</p>
+        </form>
+      </div>
     </div>`;
-  const form = document.getElementById("loginform") as HTMLFormElement;
-  const msg = document.getElementById("loginmsg")!;
-  const creds = () => {
-    const d = new FormData(form);
-    return { email: String(d.get("email")), password: String(d.get("password")) };
+
+  const form = document.getElementById("authform") as HTMLFormElement;
+  const msg = document.getElementById("authmsg")!;
+  const field = (n: string) => form.elements.namedItem(n) as HTMLInputElement;
+  const remember = () => (authEmail = field("email").value.trim());
+  const go = (m: "in" | "up") => {
+    remember();
+    renderLogin(m);
   };
+  app.querySelectorAll<HTMLElement>("[data-mode]").forEach((b) => b.addEventListener("click", () => go(b.dataset.mode as "in" | "up")));
+  document.getElementById("switch")!.addEventListener("click", (e) => {
+    e.preventDefault();
+    go(up ? "in" : "up");
+  });
+  app.querySelectorAll<HTMLElement>("[data-eye]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const input = b.parentElement!.querySelector("input")!;
+      input.type = input.type === "password" ? "text" : "password";
+      b.setAttribute("aria-label", input.type === "password" ? "Passwort anzeigen" : "Passwort verbergen");
+    }),
+  );
+
+  const show = (text: string, switchTo?: "in" | "up", label?: string) => {
+    msg.innerHTML = esc(text) + (switchTo ? ` <a href="#" id="msgswitch">${esc(label ?? "")}</a>` : "");
+    msg.classList.toggle("on", Boolean(text));
+    document.getElementById("msgswitch")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      go(switchTo!);
+    });
+  };
+  show("");
+  field("email").focus();
+
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    msg.textContent = "Anmelden …";
-    const { error } = await supabase.auth.signInWithPassword(creds());
-    if (error) msg.textContent = error.message;
-    else {
-      signedIn = true;
-      await render();
-    }
-  });
-  document.getElementById("signup")!.addEventListener("click", async () => {
-    if (!form.reportValidity()) return;
-    msg.textContent = "Konto wird erstellt …";
-    const { data, error } = await supabase.auth.signUp(creds());
-    if (error) msg.textContent = error.message;
-    else if (!data.session) msg.textContent = "Bestätigungs-E-Mail gesendet. Bestätige sie und melde dich danach an.";
-    else {
-      signedIn = true;
-      await render();
+    const email = field("email").value.trim();
+    const password = field("password").value;
+    if (!email || !field("email").checkValidity()) return show("Bitte gib eine gültige E-Mail-Adresse ein.");
+    if (!password) return show("Bitte gib dein Passwort ein.");
+    const btn = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
+    btn.disabled = true;
+    try {
+      if (up) {
+        if (password.length < 8) return show("Das Passwort braucht mindestens 8 Zeichen.");
+        if (password !== field("password2").value) return show("Die beiden Passwörter sind nicht gleich.");
+        show("Konto wird erstellt …");
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) return show(authError(error.message), /already/i.test(error.message) ? "in" : undefined, "Zur Anmeldung");
+        // Bei aktivierter E-Mail-Bestätigung meldet Supabase eine bereits vergebene E-Mail ohne Fehler (leere identities).
+        if (data.user && data.user.identities?.length === 0) return show("Diese E-Mail ist schon registriert.", "in", "Jetzt anmelden");
+        if (!data.session) return renderLogin("in", email);
+        signedIn = true;
+        await render();
+      } else {
+        show("Anmelden …");
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) return show(authError(error.message), /invalid login/i.test(error.message) ? "up" : undefined, "Registrieren");
+        signedIn = true;
+        await render();
+      }
+    } finally {
+      btn.disabled = false;
     }
   });
 }
