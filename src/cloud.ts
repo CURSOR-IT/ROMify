@@ -101,3 +101,37 @@ export async function removeFromLibrary(key: string) {
   const { error } = await supabase.from("games").delete().eq("user_id", user.id).eq("game_key", key);
   if (error) throw error;
 }
+
+// ---- Freischaltung neuer Konten ----
+export interface Profile {
+  user_id: string;
+  email: string | null;
+  approved: boolean;
+  created_at: string;
+  decided_at: string | null;
+}
+
+/** Ist das eigene Konto freigeschaltet? Fehlt die Tabelle noch (SQL nicht eingespielt), ist die Funktion inaktiv. */
+export async function myApproval(): Promise<"approved" | "pending"> {
+  const user = await currentUser();
+  if (!user) return "pending";
+  const { data, error } = await supabase.from("profiles").select("approved").eq("user_id", user.id).maybeSingle();
+  if (error) return "approved";
+  return data?.approved ? "approved" : "pending";
+}
+
+export async function listProfiles(): Promise<Profile[]> {
+  const { data, error } = await supabase.from("profiles").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as Profile[];
+}
+
+export async function setApproved(userId: string, approved: boolean) {
+  const { error } = await supabase.from("profiles").update({ approved, decided_at: new Date().toISOString() }).eq("user_id", userId);
+  if (error) throw error;
+}
+
+export async function countPending(): Promise<number> {
+  const { count } = await supabase.from("profiles").select("user_id", { count: "exact", head: true }).eq("approved", false);
+  return count ?? 0;
+}

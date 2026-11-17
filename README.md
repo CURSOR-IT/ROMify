@@ -32,7 +32,8 @@ Der Katalog enthält ausschließlich **selbst erstellte oder frei lizenzierte Sp
 - 📚 **Bibliothek nach Konsole** sortiert, dazu eine Katalogseite mit Suche
 - 💽 **Optionaler ROM-Cache:** Beim Start fragt die App „ROM im Cache speichern? Ja/Nein“. Nur bei „Ja“ bleibt die ROM im Browser, sonst nur im Arbeitsspeicher
 - 📲 **Als App installierbar** (PWA): „Zum Startbildschirm hinzufügen“, fertig
-- 🛡️ **Admin-Tab** mit ADMIN/USER-Umschalter: ROM hinzufügen, Meldungen prüfen, Katalog verwalten
+- ✅ **Freischaltung:** Neue Konten müssen von einem Admin freigeschaltet werden (mit Zähler am Admin-Tab). Das erzwingt die Datenbank, nicht nur die Oberfläche
+- 🛡️ **Admin-Tab** mit ADMIN/USER-Umschalter: Registrierungen freischalten, ROM hinzufügen, Meldungen prüfen, Katalog verwalten
 - 🔍 **ROM-Header wird automatisch gelesen:** Titel, Spielcode, Hersteller, Region, Version, Größe und Prüfsumme füllen das Formular vor. Bei DS-Spielen wird sogar das Icon als Cover übernommen
 
 ## 🕹️ Unterstützte Konsolen 👾
@@ -84,10 +85,11 @@ EmulatorJS startet ──► Spielstand, Spielzeit & Erfolge landen in der Daten
 
 Voraussetzungen: Node.js 20+ und ein kostenloses [Supabase](https://supabase.com)-Projekt.
 
-**1️⃣ Datenbank einrichten.** Im Supabase **SQL Editor** nacheinander ausführen (beide wiederholbar):
+**1️⃣ Datenbank einrichten.** Im Supabase **SQL Editor** nacheinander ausführen (alle wiederholbar):
 
 1. `supabase/schema.sql` (Tabellen, Spielstand-Speicher, Zugriffsregeln)
 2. `supabase/catalog.sql` (Katalog, Admins, Meldungen)
+3. `supabase/approval.sql` (Freischaltung neuer Konten; bestehende Konten gelten als freigeschaltet)
 
 **2️⃣ Konfiguration.**
 
@@ -116,7 +118,7 @@ select id from auth.users where email = 'DEINE@EMAIL.DE'
 on conflict do nothing;
 ```
 
-3. 🔁 Neu anmelden. Oben erscheint der Tab **🛡️ Admin**. Dort wählst du die ROM-Datei, die App liest den Header und füllt Titel, Konsole, Hersteller und Beschreibung vor. Du ergänzt Autor und Lizenz, setzt den Rechte-Haken und lädst hoch. Oben schaltest du mit **ADMIN / USER** zwischen beiden Ansichten um.
+3. 🔁 Neu anmelden. (Admins sind automatisch freigeschaltet.) Oben erscheint der Tab **🛡️ Admin**. Dort wählst du die ROM-Datei, die App liest den Header und füllt Titel, Konsole, Hersteller und Beschreibung vor. Du ergänzt Autor und Lizenz, setzt den Rechte-Haken und lädst hoch. Oben schaltest du mit **ADMIN / USER** zwischen beiden Ansichten um.
 
 ## 🧱 Tech-Stack 🧰
 
