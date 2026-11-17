@@ -34,3 +34,29 @@ export const ACCEPT = Object.keys(SYSTEMS)
   .map((e) => "." + e)
   .concat(".zip", ".7z")
   .join(",");
+
+// Anzeigename je Emulator-Core (für Gruppierung und Fußzeile).
+export const CORE_LABELS: Record<string, string> = {
+  nds: "Nintendo DS",
+  n64: "Nintendo 64",
+  gba: "Game Boy Advance",
+  gb: "Game Boy / Color",
+  nes: "NES",
+  snes: "SNES",
+  segaMD: "Sega Mega Drive",
+  segaMS: "Sega Master System",
+  segaGG: "Sega Game Gear",
+  psx: "PlayStation",
+};
+
+export const CORE_ORDER = Object.keys(CORE_LABELS);
+
+export function supportedEmulators(): { core: string; label: string; exts: string[] }[] {
+  return CORE_ORDER.map((core) => ({
+    core,
+    label: CORE_LABELS[core],
+    exts: Object.entries(SYSTEMS)
+      .filter(([, s]) => s.core === core)
+      .map(([e]) => "." + e),
+  }));
+}

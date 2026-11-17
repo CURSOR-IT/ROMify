@@ -47,3 +47,26 @@ create policy "own saves update" on storage.objects for update
   using (bucket_id = 'saves' and (storage.foldername(name))[1] = auth.uid()::text);
 create policy "own saves delete" on storage.objects for delete
   using (bucket_id = 'saves' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- ===== Privater ROM-Speicher pro Nutzer (Free-Tier: max. 50 MB pro Datei, 1 GB gesamt) =====
+alter table public.games add column if not exists filename text;
+alter table public.games add column if not exists rom_path text;
+alter table public.games add column if not exists rom_size bigint;
+
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('roms', 'roms', false, 52428800)
+on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit;
+
+drop policy if exists "own roms read"   on storage.objects;
+drop policy if exists "own roms write"  on storage.objects;
+drop policy if exists "own roms update" on storage.objects;
+drop policy if exists "own roms delete" on storage.objects;
+
+create policy "own roms read" on storage.objects for select
+  using (bucket_id = 'roms' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "own roms write" on storage.objects for insert
+  with check (bucket_id = 'roms' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "own roms update" on storage.objects for update
+  using (bucket_id = 'roms' and (storage.foldername(name))[1] = auth.uid()::text);
+create policy "own roms delete" on storage.objects for delete
+  using (bucket_id = 'roms' and (storage.foldername(name))[1] = auth.uid()::text);

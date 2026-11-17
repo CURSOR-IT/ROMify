@@ -8,6 +8,7 @@ const SYNC_INTERVAL_MS = 60_000;
 const w = window as any;
 
 export interface Session {
+  screenshot(): Promise<Blob | null>;
   stop(): Promise<void>;
   seconds(): number;
 }
@@ -76,7 +77,27 @@ export async function startGame(
   };
   document.addEventListener("visibilitychange", onHide);
 
+  async function screenshot(): Promise<Blob | null> {
+    try {
+      const data: Uint8Array | undefined = await w.EJS_emulator?.gameManager?.screenshot?.();
+      if (data && data.length > 2000) return new Blob([data as BlobPart], { type: "image/png" });
+    } catch {
+      /* Fallback unten */
+    }
+    try {
+      const c = document.querySelector("#ejs canvas") as HTMLCanvasElement | null;
+      if (c) {
+        const b: Blob | null = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.8));
+        if (b && b.size > 3000) return b;
+      }
+    } catch {
+      /* kein Cover */
+    }
+    return null;
+  }
+
   return {
+    screenshot,
     seconds: () => (Date.now() - started) / 1000,
     async stop() {
       window.clearInterval(timer);
