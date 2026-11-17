@@ -4,13 +4,13 @@ Webbasierter Retro-Emulator für Handy und PC. Login per E-Mail, Spielstände un
 
 - **Emulation:** [EmulatorJS](https://emulatorjs.org) (WebAssembly), Systeme siehe `src/systems.ts` (NDS, N64, GBA, GB/GBC, NES, SNES, Mega Drive, PSX, …). 3DS wird im Browser nicht unterstützt.
 - **Backend:** Supabase Free-Tier (Auth, Postgres, Storage, Row-Level-Security).
-- **ROMs** liegen lokal (IndexedDB). Optional sicherst du sie **privat** in deinem eigenen Cloud-Speicher (Supabase Storage, nur für dich lesbar per RLS). Es gibt keinen gemeinsamen ROM-Katalog und es werden keine ROMs/BIOS mitgeliefert. Nutze nur eigene, legal erworbene Dateien.
-- **Oberfläche:** Login-Seite, Hauptmenü (zuletzt gespielt, neu, empfohlen, unterstützte Emulatoren), Bibliothek nach Emulator gruppiert. Hintergrund = unscharfes Cover des zuletzt gespielten Spiels (Screenshot beim Beenden oder eigenes Bild).
+- **ROMs liegen nie im Browser.** Nur Admins laden ROMs in den Katalog hoch. Beim Spielen wird die ROM aus dem Katalog in den Arbeitsspeicher geladen und danach verworfen. Im Konto gespeichert werden nur Spielstände, Spielzeit, Erfolge und die Spieleliste (Verweise auf Katalogeinträge). Nutzer können keine eigenen ROMs hinzufügen.
+- **Oberfläche:** Login-Seite, Hauptmenü (zuletzt gespielt, meine Spiele, neu im Katalog, empfohlen, unterstützte Emulatoren), Katalog, Bibliothek nach Emulator gruppiert. Hintergrund = unscharfes Cover des zuletzt gespielten Spiels. Admins haben oben einen Umschalter ADMIN / USER.
 - **Sync:** Save State pro Spiel (Hash der ROM → geräteübergreifend gleich) alle 60 s, beim Verlassen und beim Tab-Wechsel.
 
 ## Einrichtung
 
-1. Supabase-Projekt anlegen, `supabase/schema.sql` im SQL Editor ausführen (idempotent, kann erneut ausgeführt werden).
+1. Supabase-Projekt anlegen, `supabase/schema.sql` und danach `supabase/catalog.sql` im SQL Editor ausführen (beide wiederholbar).
 2. `.env.example` nach `.env` kopieren und `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` setzen.
 3. `npm install && npm run dev`
 
@@ -25,6 +25,6 @@ Webbasierter Retro-Emulator für Handy und PC. Login per E-Mail, Spielstände un
 
 - Cloud-Sync nutzt Save States, die an den Core gebunden sind. Core-Updates können alte States ungültig machen.
 - Ein Spiel gleichzeitig auf zwei Geräten: der letzte Upload gewinnt.
-- Free-Tier: max. 50 MB pro Datei und 1 GB Speicher gesamt. Große Spiele (viele DS-/PSX-ROMs) passen nicht in den Cloud-Speicher und bleiben lokal.
+- Free-Tier von Supabase: max. 50 MB pro Datei, 1 GB Speicher und ca. 5 GB Datenverkehr pro Monat. Da die ROM bei jedem Start geladen wird, zählt jeder Start gegen das Datenvolumen.
 - Erfolge sind eigene (Spielzeit, Bibliothek), keine spielinternen.
 - Für manche Cores (z. B. PSP) wären COOP/COEP-Header nötig.

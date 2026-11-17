@@ -12,9 +12,8 @@ export interface CloudGame {
   system: string;
   playtime_sec: number;
   last_played: string;
-  filename?: string | null;
-  rom_path?: string | null;
-  rom_size?: number | null;
+  added_at: string;
+  catalog_id: string | null;
 }
 
 export async function currentUser() {
@@ -79,43 +78,26 @@ export async function unlock(code: string) {
   await supabase.from("achievements").upsert({ user_id: user.id, code }, { onConflict: "user_id,code", ignoreDuplicates: true });
 }
 
-// ---- Privater ROM-Speicher (nur der eigene Nutzer kann lesen/schreiben, per RLS) ----
-export const ROM_LIMIT = 50 * 1024 * 1024; // Supabase Free-Tier: 50 MB pro Datei
+// Supabase Free-Tier: max. 50 MB pro Datei (Katalog-Uploads durch Admins)
+export const ROM_LIMIT = 50 * 1024 * 1024;
 
-export async function uploadRom(
-  key: string,
-  blob: Blob,
-  meta: { title: string; core: string; filename: string },
-  cover?: Blob,
-) {
+// ---- Bibliothek: nur Verweise auf Katalogeinträge, keine ROM-Dateien ----
+export async function addToLibrary(rom: { id: string; title: string; system: string }) {
   const user = await currentUser();
   if (!user) throw new Error("Nicht angemeldet");
-  if (blob.size > ROM_LIMIT) {
-    throw new Error(`Datei zu groß (${(blob.size / 1048576).toFixed(0)} MB). Im kostenlosen Tarif sind max. 50 MB erlaubt.`);
-  }
-  const path = `${user.id}/${key}/rom.bin`;
-  const up = await supabase.storage.from("roms").upload(path, blob, { upsert: true, contentType: "application/octet-stream" });
-  if (up.error) throw up.error;
-  if (cover) await supabase.storage.from("roms").upload(`${user.id}/${key}/cover`, cover, { upsert: true, contentType: cover.type || "image/png" });
   const { error } = await supabase.from("games").upsert({
     user_id: user.id,
-    game_key: key,
-    title: meta.title,
-    system: meta.core,
-    filename: meta.filename,
-    rom_path: path,
-    rom_size: blob.size,
+    game_key: rom.id,
+    title: rom.title,
+    system: rom.system,
+    catalog_id: rom.id,
   });
   if (error) throw error;
 }
 
-export async function downloadRom(path: string): Promise<Blob> {
-  const { data, error } = await supabase.storage.from("roms").download(path);
-  if (error || !data) throw error ?? new Error("Download fehlgeschlagen");
-  return data;
-}
-
-export async function downloadCover(path: string): Promise<Blob | null> {
-  const { data } = await supabase.storage.from("roms").download(path.replace(/rom\.bin$/, "cover"));
-  return data ?? null;
+export async function removeFromLibrary(key: string) {
+  const user = await currentUser();
+  if (!user) return;
+  const { error } = await supabase.from("games").delete().eq("user_id", user.id).eq("game_key", key);
+  if (error) throw error;
 }

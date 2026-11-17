@@ -1,19 +1,16 @@
 import "./style.css";
 import { ACHIEVEMENTS } from "./achievements";
 import {
+  addToLibrary,
   cloudConfigured,
   currentUser,
   listAchievements,
-  downloadCover,
-  downloadRom,
   listCloudGames,
+  removeFromLibrary,
   supabase,
   unlock,
-  uploadRom,
   type CloudGame,
 } from "./cloud";
-import { startGame, type Session } from "./emulator";
-import { getLocal, listLocal, putLocal, removeLocal, sha1, type LocalGame } from "./library";
 import {
   LICENSES,
   adminDelete,
@@ -27,7 +24,8 @@ import {
   reportRom,
   type CatalogRom,
 } from "./catalog";
-import { recommend } from "./recommend";
+import { startGame, type Session } from "./emulator";
+import { recommend, type Entry } from "./recommend";
 import { ACCEPT, CORE_LABELS, CORE_ORDER, supportedEmulators, systemFor } from "./systems";
 
 const app = document.getElementById("app")!;
@@ -39,19 +37,25 @@ const BASE = import.meta.env.BASE_URL;
 const LOGO = `${BASE}logo.jpg`;
 let session: Session | null = null;
 let signedIn = false;
-let urls: string[] = [];
+
+// Admin-Ansicht: Nur echte Admins (Tabelle `admins`) sehen den Umschalter. Die Rechte erzwingt die Datenbank.
+let isAdminUser = false;
+let adminChecked = false;
+let adminView = (() => {
+  try {
+    return localStorage.getItem("romify.adminView") !== "user";
+  } catch {
+    return true;
+  }
+})();
+async function refreshAdmin() {
+  isAdminUser = signedIn ? await isAdmin().catch(() => false) : false;
+  adminChecked = true;
+}
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-const blobUrl = (b: Blob) => {
-  const u = URL.createObjectURL(b);
-  urls.push(u);
-  return u;
-};
-const resetUrls = () => {
-  urls.forEach((u) => URL.revokeObjectURL(u));
-  urls = [];
-};
 const fmtTime = (s: number) => (s >= 3600 ? `${(s / 3600).toFixed(1)} h` : `${Math.max(1, Math.round(s / 60))} min`);
+const fmtMB = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 function ago(ts: number) {
   const d = (Date.now() - ts) / 1000;
   if (d < 3600) return `vor ${Math.max(1, Math.round(d / 60))} Min.`;
@@ -73,73 +77,97 @@ const initials = (t: string) =>
     .join("")
     .toUpperCase();
 
+/* ---------- Daten (alles aus der Cloud, nichts davon im Browser gespeichert) ---------- */
 interface Data {
-  local: LocalGame[];
-  cloud: CloudGame[];
+  catalog: CatalogRom[];
+  covers: Map<string, string>;
+  entries: Entry[];
   unlocked: Set<string>;
+  err: string;
+}
+
+let coverCache: { sig: string; at: number; map: Map<string, string> } = { sig: "", at: 0, map: new Map() };
+async function getCovers(catalog: CatalogRom[]) {
+  const sig = catalog.map((r) => r.id + (r.cover_path ?? "")).join("|");
+  if (coverCache.sig === sig && Date.now() - coverCache.at < 50 * 60_000) return coverCache.map;
+  const map = await coverUrls(catalog).catch(() => new Map<string, string>());
+  coverCache = { sig, at: Date.now(), map };
+  return map;
 }
 
 async function load(): Promise<Data> {
-  const local = await listLocal();
+  let catalog: CatalogRom[] = [];
   let cloud: CloudGame[] = [];
   let unlocked = new Set<string>();
+  let err = "";
   if (signedIn) {
     try {
-      cloud = await listCloudGames();
+      [catalog, cloud] = await Promise.all([listCatalog(), listCloudGames()]);
       unlocked = new Set((await listAchievements()).map((a) => a.code));
     } catch (e) {
-      console.warn(e);
+      err = (e as Error).message;
     }
   }
-  const byKey = new Map(cloud.map((c) => [c.game_key, c]));
-  for (const g of local) {
-    const c = byKey.get(g.key);
-    if (c) g.lastPlayed = Math.max(g.lastPlayed ?? 0, new Date(c.last_played).getTime()) || undefined;
-  }
-  return { local, cloud, unlocked };
+  const byId = new Map(catalog.map((r) => [r.id, r]));
+  const entries: Entry[] = cloud.map((c) => {
+    const rom = c.catalog_id ? byId.get(c.catalog_id) : undefined;
+    return {
+      key: c.game_key,
+      title: rom?.title ?? c.title,
+      core: rom?.system ?? c.system,
+      rom,
+      lastPlayed: c.playtime_sec > 0 ? new Date(c.last_played).getTime() : undefined,
+      addedAt: new Date(c.added_at ?? c.last_played).getTime(),
+      playtime: c.playtime_sec,
+    };
+  });
+  const covers = await getCovers(catalog);
+  return { catalog, covers, entries, unlocked, err };
 }
 
-function setBackground(local: LocalGame[]) {
-  const withCover = local.filter((g) => g.cover).sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0));
-  bg.style.backgroundImage = `url(${withCover[0]?.cover ? blobUrl(withCover[0].cover) : LOGO})`;
+function setBackground(d: Data) {
+  const last = [...d.entries].filter((e) => e.rom && d.covers.has(e.rom.id)).sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))[0];
+  const url = last?.rom ? d.covers.get(last.rom.id) : undefined;
+  bg.style.backgroundImage = `url(${url ?? LOGO})`;
 }
 
-function card(g: LocalGame, sub: string) {
-  const art = g.cover
-    ? `background-image:url(${blobUrl(g.cover)})`
-    : `background:${gradient(g.title)}`;
-  return `<button class="card" data-play="${g.key}" title="${esc(g.title)}">
-    <div class="art" style="${art}">${g.cover ? "" : `<span>${esc(initials(g.title))}</span>`}<i class="sys">${esc(CORE_LABELS[g.core] ?? g.core)}</i></div>
-    <b>${esc(g.title)}</b><small>${esc(sub)}</small></button>`;
+/* ---------- Bausteine ---------- */
+function artStyle(title: string, cover?: string) {
+  return cover ? `background-image:url(${cover})` : `background:${gradient(title)}`;
 }
 
-function catCard(r: CatalogRom, cover: string | undefined, sub: string) {
-  const art = cover ? `background-image:url(${cover})` : `background:${gradient(r.title)}`;
+function entryCard(e: Entry, d: Data, sub: string) {
+  const cover = e.rom ? d.covers.get(e.rom.id) : undefined;
+  const tag = e.rom ? `data-play="${e.rom.id}"` : "disabled";
+  return `<button class="card" ${tag} title="${esc(e.title)}">
+    <div class="art" style="${artStyle(e.title, cover)}">${cover ? "" : `<span>${esc(initials(e.title))}</span>`}<i class="sys">${esc(CORE_LABELS[e.core] ?? e.core)}</i></div>
+    <b>${esc(e.title)}</b><small>${esc(e.rom ? sub : "Nicht mehr im Katalog")}</small></button>`;
+}
+
+function catCard(r: CatalogRom, d: Data, sub: string) {
+  const cover = d.covers.get(r.id);
   return `<a class="card" href="#/catalog" title="${esc(r.title)}">
-    <div class="art" style="${art}">${cover ? "" : `<span>${esc(initials(r.title))}</span>`}<i class="sys">${esc(CORE_LABELS[r.system] ?? r.system)}</i></div>
+    <div class="art" style="${artStyle(r.title, cover)}">${cover ? "" : `<span>${esc(initials(r.title))}</span>`}<i class="sys">${esc(CORE_LABELS[r.system] ?? r.system)}</i></div>
     <b>${esc(r.title)}</b><small>${esc(sub)}</small></a>`;
 }
 
 const row = (html: string, empty: string) => (html ? `<div class="scroller">${html}</div>` : `<p class="muted">${empty}</p>`);
+const catalogHint = '<a href="#/catalog">Hol dir Spiele aus dem Katalog →</a>';
 
 function header(active: "home" | "library" | "catalog") {
   return `<header class="top">
     <a class="brand" href="#/">ROMify</a>
     <nav><a href="#/" class="${active === "home" ? "on" : ""}">Start</a><a href="#/catalog" class="${active === "catalog" ? "on" : ""}">Katalog</a><a href="#/library" class="${active === "library" ? "on" : ""}">Bibliothek</a></nav>
-    <div>${signedIn ? '<button id="logout">Abmelden</button>' : ""}</div>
+    <div class="acct">${
+      isAdminUser
+        ? `<button id="adminToggle" class="admintoggle ${adminView ? "is-admin" : "is-user"}" title="Ansicht wechseln: Admin / Benutzer" aria-pressed="${adminView}">${adminView ? "ADMIN" : "USER"}</button>`
+        : ""
+    }${signedIn ? '<button id="logout">Abmelden</button>' : ""}</div>
   </header>`;
 }
 
-const addButton = `<label class="drop">
-  <input id="file" type="file" accept="${ACCEPT}" multiple hidden />
-  <strong>+ ROM hinzufügen</strong>
-  <span class="muted">Dateien bleiben im Browser. Optional sicherst du sie privat in deiner Cloud (nur für dich sichtbar).</span>
-  <span id="msg" class="muted"></span>
-</label>`;
-
 /* ---------- Login ---------- */
 function renderLogin() {
-  resetUrls();
   bg.style.backgroundImage = `url(${LOGO})`;
   app.innerHTML = `
     <div class="login">
@@ -184,57 +212,24 @@ function renderLogin() {
 
 /* ---------- Hauptmenü ---------- */
 async function renderHome() {
-  const { local, cloud, unlocked } = await load();
-  resetUrls();
-  setBackground(local);
-  const recent = [...local].filter((g) => g.lastPlayed).sort((a, b) => b.lastPlayed! - a.lastPlayed!).slice(0, 12);
-  const fresh = [...local].sort((a, b) => b.addedAt - a.addedAt).slice(0, 12);
-  const rec = recommend(local, cloud);
-
-  let cat: CatalogRom[] = [];
-  let covers = new Map<string, string>();
-  if (signedIn) {
-    cat = await listCatalog().catch(() => [] as CatalogRom[]);
-    covers = await coverUrls(cat.slice(0, 12)).catch(() => new Map<string, string>());
-  }
-  const haveCat = new Set(local.map((g) => g.catalogId));
-  const newCat = cat.filter((r) => !haveCat.has(r.id)).slice(0, 12);
-  const myCores = new Set(local.map((g) => g.core));
-  const catRec = newCat.filter((r) => myCores.has(r.system)).slice(0, 6);
+  const d = await load();
+  setBackground(d);
+  const recent = d.entries.filter((e) => e.lastPlayed).sort((a, b) => b.lastPlayed! - a.lastPlayed!).slice(0, 12);
+  const mine = [...d.entries].sort((a, b) => b.addedAt - a.addedAt).slice(0, 12);
+  const inLib = new Set(d.entries.map((e) => e.key));
+  const newCat = d.catalog.filter((r) => !inLib.has(r.id)).slice(0, 12);
+  const rec = recommend(d.entries, d.catalog);
 
   app.innerHTML = `${header("home")}
   <main>
-    ${addButton}
-    <section><h2>Zuletzt gespielt</h2>${row(recent.map((g) => card(g, ago(g.lastPlayed!))).join(""), "Noch nichts gespielt. Starte ein Spiel aus deiner Bibliothek.")}</section>
-    <section><h2>Neu hinzugefügt</h2>${row(fresh.map((g) => card(g, ago(g.addedAt))).join(""), "Füge oben deine erste ROM hinzu.")}</section>
-    ${
-      signedIn
-        ? `<section><h2>Neu im Katalog <a class="more" href="#/catalog">Alle ansehen →</a></h2>${row(
-            newCat.map((r) => catCard(r, covers.get(r.id), `${CORE_LABELS[r.system] ?? r.system}`)).join(""),
-            "Noch keine Einträge im Katalog.",
-          )}</section>`
-        : ""
-    }
-    <section><h2>Empfohlen für dich</h2>
-      ${row(
-        rec.games.map((r) => card(r.game, r.reason)).join("") + catRec.map((r) => catCard(r, covers.get(r.id), "Im Katalog · " + (CORE_LABELS[r.system] ?? r.system))).join(""),
-        "Spiele ein paar Titel, dann passen wir die Empfehlungen an dich an.",
-      )}
-      ${rec.missing
-        .map(
-          (m) => `<div class="suggest"><b>Mehr aus der ${esc(m.seriesLabel)}-Reihe</b>
-          <div class="chips">${m.titles.map((t) => `<span class="chip">${esc(t)}</span>`).join("")}</div>
-          <span class="muted">Nur Titelvorschläge. ROMs musst du selbst besitzen und hinzufügen.</span></div>`,
-        )
-        .join("")}
-    </section>
-    ${
-      signedIn
-        ? `<section><h2>Erfolge</h2><ul class="ach">${ACHIEVEMENTS.map(
-            (a) => `<li class="${unlocked.has(a.code) ? "on" : ""}"><b>${unlocked.has(a.code) ? "🏆" : "🔒"} ${esc(a.title)}</b><br><span class="muted">${esc(a.desc)}</span></li>`,
-          ).join("")}</ul></section>`
-        : ""
-    }
+    ${d.err ? `<p class="warn">Daten konnten nicht geladen werden: ${esc(d.err)}</p>` : ""}
+    <section><h2>Zuletzt gespielt</h2>${row(recent.map((e) => entryCard(e, d, ago(e.lastPlayed!))).join(""), "Noch nichts gespielt. Starte ein Spiel aus deiner Bibliothek.")}</section>
+    <section><h2>Meine Spiele</h2>${row(mine.map((e) => entryCard(e, d, ago(e.addedAt))).join(""), `Noch keine Spiele. ${catalogHint}`)}</section>
+    <section><h2>Neu im Katalog <a class="more" href="#/catalog">Alle ansehen →</a></h2>${row(newCat.map((r) => catCard(r, d, ago(+new Date(r.created_at)))).join(""), "Es gibt nichts Neues im Katalog.")}</section>
+    <section><h2>Empfohlen für dich</h2>${row(rec.map((r) => catCard(r.rom, d, r.reason)).join(""), "Sobald der Katalog gefüllt ist, siehst du hier Empfehlungen.")}</section>
+    <section><h2>Erfolge</h2><ul class="ach">${ACHIEVEMENTS.map(
+      (a) => `<li class="${d.unlocked.has(a.code) ? "on" : ""}"><b>${d.unlocked.has(a.code) ? "🏆" : "🔒"} ${esc(a.title)}</b><br><span class="muted">${esc(a.desc)}</span></li>`,
+    ).join("")}</ul></section>
   </main>
   <footer class="emus">
     <h2>Unterstützte Emulatoren</h2>
@@ -246,73 +241,50 @@ async function renderHome() {
   wireCommon();
 }
 
-/* ---------- Bibliothek ---------- */
+/* ---------- Bibliothek (nur Verweise, keine Dateien) ---------- */
 async function renderLibrary() {
-  const { local, cloud } = await load();
-  resetUrls();
-  setBackground(local);
-  const localKeys = new Set(local.map((g) => g.key));
-  const cloudOnly = cloud.filter((c) => !localKeys.has(c.game_key));
-  const byKey = new Map(cloud.map((c) => [c.game_key, c]));
-
-  const groups = CORE_ORDER.map((core) => ({ core, games: local.filter((g) => g.core === core).sort((a, b) => a.title.localeCompare(b.title)) })).filter((g) => g.games.length);
+  const d = await load();
+  setBackground(d);
+  const groups = CORE_ORDER.map((core) => ({
+    core,
+    games: d.entries.filter((e) => e.core === core).sort((a, b) => a.title.localeCompare(b.title)),
+  })).filter((g) => g.games.length);
 
   app.innerHTML = `${header("library")}
   <main>
-    ${addButton}
-    <h2>Meine ROMs nach Emulator <span class="muted">(${local.length})</span></h2>
+    ${d.err ? `<p class="warn">Daten konnten nicht geladen werden: ${esc(d.err)}</p>` : ""}
+    <div class="intro"><b>Meine Bibliothek</b><br><span class="muted">Hier stehen deine Spiele nach Emulator. Die ROMs werden beim Spielen aus dem Katalog geladen und nicht im Browser gespeichert. Gespeichert werden nur deine Spielstände und deine Spielzeit.</span></div>
     ${
       groups.length
         ? groups
             .map(
               (gr) => `<details class="group" open>
-        <summary><b>${esc(CORE_LABELS[gr.core])}</b><span class="count">${gr.games.length}</span></summary>
+        <summary><b>${esc(CORE_LABELS[gr.core] ?? gr.core)}</b><span class="count">${gr.games.length}</span></summary>
         <ul class="games">${gr.games
-          .map((g) => {
-            const c = byKey.get(g.key);
-            return `<li><div class="thumb" style="${g.cover ? `background-image:url(${blobUrl(g.cover)})` : `background:${gradient(g.title)}`}"></div>
-              <div class="info"><b>${esc(g.title)}</b><br><span class="muted">${esc(g.systemLabel)}${c ? " · " + fmtTime(c.playtime_sec) : ""}${c?.rom_path ? ' · <span class="badge">☁ gesichert</span>' : ""}</span></div>
-              <div class="row"><button data-play="${g.key}" class="primary">Spielen</button>
-              ${signedIn && !c?.rom_path ? `<button data-up="${g.key}" title="ROM privat in deiner Cloud sichern">☁</button>` : ""}
-              <button data-cover="${g.key}" title="Eigenes Cover wählen">🖼</button>
-              <button data-del="${g.key}" title="Entfernen">✕</button></div></li>`;
+          .map((e) => {
+            const cover = e.rom ? d.covers.get(e.rom.id) : undefined;
+            return `<li><div class="thumb" style="${artStyle(e.title, cover)}"></div>
+              <div class="info"><b>${esc(e.title)}</b><br><span class="muted">${esc(CORE_LABELS[e.core] ?? e.core)}${e.playtime ? " · " + fmtTime(e.playtime) : ""}${e.rom ? "" : " · nicht mehr im Katalog"}</span></div>
+              <div class="row">${e.rom ? `<button data-play="${e.rom.id}" class="primary">Spielen</button>` : ""}
+              <button data-rm="${e.key}" title="Aus Bibliothek entfernen">✕</button></div></li>`;
           })
           .join("")}</ul></details>`,
             )
             .join("")
-        : '<p class="muted">Noch keine ROMs. Füge oben deine erste hinzu.</p>'
-    }
-    ${
-      cloudOnly.length
-        ? `<h2>Auf anderen Geräten gespielt</h2>
-      <p class="muted">Füge dieselbe ROM-Datei hier hinzu, dann wird dein Spielstand automatisch geladen.</p>
-      <ul class="games">${cloudOnly
-        .map((c) => `<li><div class="info"><b>${esc(c.title)}</b><br><span class="muted">${esc(CORE_LABELS[c.system] ?? c.system)} · ${fmtTime(c.playtime_sec)}</span></div>${c.rom_path ? `<button data-down="${c.game_key}" class="primary">Aus Cloud laden</button>` : '<span class="muted">ROM fehlt</span>'}</li>`)
-        .join("")}</ul>`
-        : ""
+        : `<p class="muted">Noch keine Spiele in deiner Bibliothek. ${catalogHint}</p>`
     }
   </main>`;
   wireCommon();
 }
 
 /* ---------- Katalog ---------- */
-const fmtMB = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
-
 async function renderCatalog() {
-  let items: CatalogRom[] = [];
-  let admin = false;
-  let err = "";
-  try {
-    [items, admin] = await Promise.all([listCatalog(), isAdmin()]);
-  } catch (e) {
-    err = (e as Error).message;
-  }
-  const covers = await coverUrls(items).catch(() => new Map<string, string>());
-  const local = await listLocal();
-  const haveCat = new Set(local.map((g) => g.catalogId).filter(Boolean));
+  const d = await load();
+  const admin = isAdminUser && adminView;
   const reports = admin ? await listReports().catch(() => []) : [];
-  resetUrls();
-  setBackground(local);
+  setBackground(d);
+  const items = d.catalog;
+  const inLib = new Set(d.entries.map((e) => e.key));
 
   const groups = CORE_ORDER.map((core) => ({ core, roms: items.filter((r) => r.system === core) })).filter((g) => g.roms.length);
   const coreOptions = CORE_ORDER.map((c) => `<option value="${c}">${esc(CORE_LABELS[c])}</option>`).join("");
@@ -321,7 +293,7 @@ async function renderCatalog() {
   <main>
     <div class="intro"><b>ROM-Katalog</b><br>
       <span class="muted">Hier findest du ausschließlich selbst erstellte oder frei lizenzierte ROMs (Homebrew). Etwas gefunden, das hier nicht hingehört? Nutze „Melden“, wir prüfen es und entfernen es bei Bedarf.</span></div>
-    ${err ? `<p class="warn">Katalog konnte nicht geladen werden: ${esc(err)}</p>` : ""}
+    ${d.err ? `<p class="warn">Katalog konnte nicht geladen werden: ${esc(d.err)}</p>` : ""}
     ${
       admin
         ? `<details class="group admin"><summary><b>Admin: ROM hinzufügen</b></summary>
@@ -359,13 +331,14 @@ async function renderCatalog() {
               (gr) => `<details class="group" open><summary><b>${esc(CORE_LABELS[gr.core])}</b><span class="count">${gr.roms.length}</span></summary>
         <ul class="games">${gr.roms
           .map((r) => {
-            const cv = covers.get(r.id);
+            const cv = d.covers.get(r.id);
             return `<li data-text="${esc((r.title + " " + r.author + " " + (r.description ?? "")).toLowerCase())}">
-              <div class="thumb" style="${cv ? `background-image:url(${cv})` : `background:${gradient(r.title)}`}"></div>
+              <div class="thumb" style="${artStyle(r.title, cv)}"></div>
               <div class="info"><b>${esc(r.title)}</b><br><span class="muted">${esc(r.author)} · ${esc(r.license)} · ${fmtMB(r.size)}</span>
                 ${r.description ? `<br><span class="muted">${esc(r.description)}</span>` : ""}</div>
               <div class="row">
-                ${haveCat.has(r.id) ? '<span class="badge">✓ In Bibliothek</span>' : `<button data-catadd="${r.id}" class="primary">Hinzufügen</button>`}
+                <button data-play="${r.id}" class="primary">Spielen</button>
+                ${inLib.has(r.id) ? '<span class="badge">✓ In Bibliothek</span>' : `<button data-catadd="${r.id}" title="Zur Bibliothek hinzufügen">＋</button>`}
                 <button data-report="${r.id}" title="Problem melden">⚑</button>
                 ${admin ? `<button data-catdel="${r.id}" title="Löschen (Admin)">✕</button>` : ""}
               </div></li>`;
@@ -376,12 +349,7 @@ async function renderCatalog() {
         : '<p class="muted">Der Katalog ist noch leer.</p>'
     }
   </main>`;
-
-  document.getElementById("logout")?.addEventListener("click", async () => {
-    await supabase.auth.signOut();
-    signedIn = false;
-    await render();
-  });
+  wireCommon();
 
   document.getElementById("q")?.addEventListener("input", (e) => {
     const q = (e.target as HTMLInputElement).value.trim().toLowerCase();
@@ -392,29 +360,13 @@ async function renderCatalog() {
     b.addEventListener("click", async () => {
       const rom = items.find((r) => r.id === b.dataset.catadd);
       if (!rom) return;
-      b.textContent = "Lade …";
+      b.textContent = "…";
       try {
-        const blob = await downloadCatalogRom(rom);
-        const file = new File([blob], rom.filename, { type: "application/octet-stream" });
-        let cover: Blob | undefined;
-        const cu = covers.get(rom.id);
-        if (cu) cover = await fetch(cu).then((r) => r.blob()).catch(() => undefined);
-        const sys = systemFor(rom.filename);
-        await putLocal({
-          key: await sha1(file),
-          title: rom.title,
-          core: rom.system,
-          systemLabel: sys?.label ?? CORE_LABELS[rom.system] ?? rom.system,
-          filename: rom.filename,
-          file,
-          cover,
-          addedAt: Date.now(),
-          catalogId: rom.id,
-        });
+        await addToLibrary(rom);
         await checkAchievements(0);
         await render();
       } catch (e) {
-        b.textContent = "Hinzufügen";
+        b.textContent = "＋";
         alert((e as Error).message);
       }
     }),
@@ -464,17 +416,17 @@ async function renderCatalog() {
   form?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const msg = document.getElementById("adminmsg")!;
-    const d = new FormData(form);
-    const rom = d.get("rom") as File;
-    const cover = d.get("cover") as File;
+    const fd = new FormData(form);
+    const rom = fd.get("rom") as File;
+    const cover = fd.get("cover") as File;
     msg.textContent = "Lade hoch …";
     try {
       await adminUpload({
-        title: String(d.get("title")).trim(),
-        author: String(d.get("author")).trim(),
-        license: String(d.get("license")),
-        description: String(d.get("description") ?? "").trim(),
-        system: String(d.get("system")),
+        title: String(fd.get("title")).trim(),
+        author: String(fd.get("author")).trim(),
+        license: String(fd.get("license")),
+        description: String(fd.get("description") ?? "").trim(),
+        system: String(fd.get("system")),
         rom,
         cover: cover && cover.size ? cover : undefined,
       });
@@ -487,96 +439,16 @@ async function renderCatalog() {
 
 /* ---------- gemeinsame Aktionen ---------- */
 function wireCommon() {
-  const msg = document.getElementById("msg");
-  document.getElementById("file")?.addEventListener("change", async (ev) => {
-    const files = Array.from((ev.target as HTMLInputElement).files ?? []);
-    for (const f of files) {
-      const sys = systemFor(f.name);
-      if (!sys) {
-        if (msg) msg.textContent = `Unbekanntes Format: ${f.name}`;
-        continue;
-      }
-      if (msg) msg.textContent = `Verarbeite ${f.name} …`;
-      const key = await sha1(f);
-      const old = await getLocal(key);
-      await putLocal({
-        ...(old ?? {}),
-        key,
-        title: old?.title ?? f.name.replace(/\.[^.]+$/, ""),
-        core: sys.core,
-        systemLabel: sys.label,
-        filename: f.name,
-        file: f,
-        addedAt: old?.addedAt ?? Date.now(),
-      });
-    }
-    await checkAchievements(0);
-    await render();
-  });
-
   app.querySelectorAll<HTMLElement>("[data-play]").forEach((b) => b.addEventListener("click", () => void play(b.dataset.play!)));
-  app.querySelectorAll<HTMLElement>("[data-del]").forEach((b) =>
+  app.querySelectorAll<HTMLElement>("[data-rm]").forEach((b) =>
     b.addEventListener("click", async () => {
-      if (confirm("ROM aus der lokalen Bibliothek entfernen? Cloud-Spielstände bleiben erhalten.")) {
-        await removeLocal(b.dataset.del!);
-        await render();
-      }
-    }),
-  );
-  app.querySelectorAll<HTMLElement>("[data-up]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      const g = await getLocal(b.dataset.up!);
-      if (!g) return;
-      if (!confirm("Diese ROM privat in deiner Cloud sichern? Nur du hast Zugriff. Lade nur Dateien hoch, die du selbst besitzt.")) return;
-      b.textContent = "…";
+      if (!confirm("Spiel aus deiner Bibliothek entfernen? Spielstände in der Cloud bleiben erhalten.")) return;
       try {
-        await uploadRom(g.key, g.file, { title: g.title, core: g.core, filename: g.filename }, g.cover);
+        await removeFromLibrary(b.dataset.rm!);
         await render();
       } catch (e) {
-        b.textContent = "☁";
         alert((e as Error).message);
       }
-    }),
-  );
-  app.querySelectorAll<HTMLElement>("[data-down]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      b.textContent = "Lade …";
-      try {
-        const c = (await listCloudGames()).find((x) => x.game_key === b.dataset.down);
-        if (!c?.rom_path) throw new Error("Keine ROM in der Cloud");
-        const file = await downloadRom(c.rom_path);
-        const cover = await downloadCover(c.rom_path);
-        await putLocal({
-          key: c.game_key,
-          title: c.title,
-          core: c.system,
-          systemLabel: CORE_LABELS[c.system] ?? c.system,
-          filename: c.filename ?? c.title,
-          file,
-          cover: cover ?? undefined,
-          addedAt: Date.now(),
-        });
-        await render();
-      } catch (e) {
-        b.textContent = "Aus Cloud laden";
-        alert((e as Error).message);
-      }
-    }),
-  );
-  app.querySelectorAll<HTMLElement>("[data-cover]").forEach((b) =>
-    b.addEventListener("click", () => {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/*";
-      input.onchange = async () => {
-        const f = input.files?.[0];
-        const g = await getLocal(b.dataset.cover!);
-        if (f && g) {
-          await putLocal({ ...g, cover: f });
-          await render();
-        }
-      };
-      input.click();
     }),
   );
   document.getElementById("logout")?.addEventListener("click", async () => {
@@ -588,50 +460,57 @@ function wireCommon() {
 
 async function render() {
   if (session) return;
-  if (cloudConfigured && !signedIn) return renderLogin();
+  if (cloudConfigured && !signedIn) {
+    adminChecked = false;
+    isAdminUser = false;
+    return renderLogin();
+  }
+  if (signedIn && !adminChecked) await refreshAdmin();
   if (location.hash.startsWith("#/catalog")) return renderCatalog();
   return location.hash.startsWith("#/library") ? renderLibrary() : renderHome();
 }
 
 async function checkAchievements(sessionSeconds: number) {
   if (!signedIn) return;
-  const local = await listLocal();
   const cloud = await listCloudGames().catch(() => [] as CloudGame[]);
   const stats = {
-    games: local.length,
-    systems: new Set(local.map((g) => g.core)).size,
+    games: cloud.length,
+    systems: new Set(cloud.map((c) => c.system)).size,
     totalSeconds: cloud.reduce((n, c) => n + c.playtime_sec, 0) + sessionSeconds,
     sessionSeconds,
   };
   for (const a of ACHIEVEMENTS) if (a.test(stats)) await unlock(a.code).catch(() => undefined);
 }
 
-async function play(key: string) {
-  const game = await getLocal(key);
-  if (!game) return;
-  game.lastPlayed = Date.now();
-  await putLocal(game);
-  resetUrls();
+/* ---------- Spielen: ROM kommt aus dem Katalog in den Arbeitsspeicher, nie in den Browser-Speicher ---------- */
+async function play(romId: string) {
   app.innerHTML = `
     <div class="player">
-      <div class="bar"><button id="back">← Beenden</button><span id="status" class="muted"></span></div>
+      <div class="bar"><button id="back">← Beenden</button><span id="status" class="muted">Lade ROM …</span></div>
       <div id="screen"></div>
     </div>`;
   const status = document.getElementById("status")!;
+  const back = document.getElementById("back")!;
+  let leave = () => location.reload();
+  back.addEventListener("click", () => leave());
   try {
-    session = await startGame(game, document.getElementById("screen")!, signedIn, (m) => (status.textContent = m));
+    const catalog = await listCatalog();
+    const rom = catalog.find((r) => r.id === romId);
+    if (!rom) throw new Error("Dieses Spiel ist nicht mehr im Katalog.");
+    await addToLibrary(rom); // sorgt dafür, dass Spielzeit und Spielstand gespeichert werden
+    const blob = await downloadCatalogRom(rom);
+    status.textContent = "Starte …";
+    session = await startGame({ key: rom.id, title: rom.title, core: rom.system }, blob, document.getElementById("screen")!, signedIn, (m) => (status.textContent = m));
+    leave = async () => {
+      const secs = session?.seconds() ?? 0;
+      status.textContent = "Speichere …";
+      await checkAchievements(secs).catch(() => undefined);
+      if (session) await session.stop(); // lädt die Seite neu
+      else location.reload();
+    };
   } catch (e) {
     status.textContent = (e as Error).message;
   }
-  document.getElementById("back")!.addEventListener("click", async () => {
-    const secs = session?.seconds() ?? 0;
-    status.textContent = "Speichere …";
-    const shot = await session?.screenshot().catch(() => null);
-    if (shot) await putLocal({ ...game, cover: shot, lastPlayed: Date.now() });
-    await checkAchievements(secs).catch(() => undefined);
-    if (session) await session.stop(); // lädt die Seite neu
-    else location.reload();
-  });
 }
 
 async function main() {
@@ -646,6 +525,16 @@ async function main() {
     });
   }
   window.addEventListener("hashchange", () => void render());
+  app.addEventListener("click", (e) => {
+    if (!(e.target as HTMLElement).closest("#adminToggle")) return;
+    adminView = !adminView;
+    try {
+      localStorage.setItem("romify.adminView", adminView ? "admin" : "user");
+    } catch {
+      /* ohne Speicher: nur für diese Sitzung */
+    }
+    void render();
+  });
   await render();
   if ("serviceWorker" in navigator && import.meta.env.PROD) {
     navigator.serviceWorker.register(`${BASE}sw.js`).catch(() => undefined);

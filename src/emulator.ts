@@ -1,5 +1,4 @@
 import { downloadState, uploadState, upsertGame } from "./cloud";
-import type { LocalGame } from "./library";
 
 const DATA_PATH = "https://cdn.emulatorjs.org/stable/data/";
 const SYNC_INTERVAL_MS = 60_000;
@@ -7,8 +6,13 @@ const SYNC_INTERVAL_MS = 60_000;
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const w = window as any;
 
+export interface Game {
+  key: string; // Katalog-ID
+  title: string;
+  core: string;
+}
+
 export interface Session {
-  screenshot(): Promise<Blob | null>;
   stop(): Promise<void>;
   seconds(): number;
 }
@@ -23,15 +27,17 @@ function loadScript(src: string): Promise<void> {
   });
 }
 
+// ROM nur als Blob im Arbeitsspeicher. Sie wird nie im Browser (IndexedDB/localStorage) gespeichert.
 export async function startGame(
-  game: LocalGame,
+  game: Game,
+  rom: Blob,
   mount: HTMLElement,
   signedIn: boolean,
   onStatus: (msg: string) => void,
 ): Promise<Session> {
   mount.innerHTML = '<div id="ejs"></div>';
 
-  const romUrl = URL.createObjectURL(game.file);
+  const romUrl = URL.createObjectURL(rom);
   let stateUrl: string | undefined;
   if (signedIn) {
     onStatus("Lade Cloud-Spielstand …");
@@ -57,7 +63,7 @@ export async function startGame(
 
   async function sync(final: boolean) {
     const emu = w.EJS_emulator;
-    const elapsed = (Date.now() - lastSync) / 1000;
+    const elapsed = Math.ceil((Date.now() - lastSync) / 1000);
     lastSync = Date.now();
     try {
       if (signedIn) {
@@ -77,27 +83,7 @@ export async function startGame(
   };
   document.addEventListener("visibilitychange", onHide);
 
-  async function screenshot(): Promise<Blob | null> {
-    try {
-      const data: Uint8Array | undefined = await w.EJS_emulator?.gameManager?.screenshot?.();
-      if (data && data.length > 2000) return new Blob([data as BlobPart], { type: "image/png" });
-    } catch {
-      /* Fallback unten */
-    }
-    try {
-      const c = document.querySelector("#ejs canvas") as HTMLCanvasElement | null;
-      if (c) {
-        const b: Blob | null = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.8));
-        if (b && b.size > 3000) return b;
-      }
-    } catch {
-      /* kein Cover */
-    }
-    return null;
-  }
-
   return {
-    screenshot,
     seconds: () => (Date.now() - started) / 1000,
     async stop() {
       window.clearInterval(timer);
