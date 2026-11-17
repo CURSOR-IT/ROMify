@@ -33,7 +33,7 @@ async function main() {
   }
   await render();
   if ("serviceWorker" in navigator && import.meta.env.PROD) {
-    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => undefined);
   }
 }
 
@@ -65,7 +65,7 @@ async function render() {
       }</div>
     </header>
     <main>
-      <img class="logo" src="/logo.jpg" alt="ROMify – Web-based Emulator" />
+      <img class="logo" src="${import.meta.env.BASE_URL}logo.jpg" alt="ROMify – Web-based Emulator" />
       <section>
         <label class="drop">
           <input id="file" type="file" accept="${ACCEPT}" multiple hidden />
