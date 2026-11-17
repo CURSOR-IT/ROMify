@@ -25,6 +25,8 @@ import {
   type CatalogRom,
 } from "./catalog";
 import { startGame, type Session } from "./emulator";
+import { readRomInfo, tidyTitle, type RomInfo } from "./romInfo";
+import { renderIconCover } from "./romCover";
 import { cacheSizes, clearCache, getCached, getPref, putCached, removeCached, setPref } from "./romcache";
 import { recommend, type Entry } from "./recommend";
 import { ACCEPT, CORE_LABELS, CORE_ORDER, supportedEmulators, systemFor } from "./systems";
@@ -155,10 +157,10 @@ function catCard(r: CatalogRom, d: Data, sub: string) {
 const row = (html: string, empty: string) => (html ? `<div class="scroller">${html}</div>` : `<p class="muted">${empty}</p>`);
 const catalogHint = '<a href="#/catalog">Hol dir Spiele aus dem Katalog →</a>';
 
-function header(active: "home" | "library" | "catalog") {
+function header(active: "home" | "library" | "catalog" | "admin") {
   return `<header class="top">
     <a class="brand" href="#/">ROMify</a>
-    <nav><a href="#/" class="${active === "home" ? "on" : ""}">Start</a><a href="#/catalog" class="${active === "catalog" ? "on" : ""}">Katalog</a><a href="#/library" class="${active === "library" ? "on" : ""}">Bibliothek</a></nav>
+    <nav><a href="#/" class="${active === "home" ? "on" : ""}">Start</a><a href="#/catalog" class="${active === "catalog" ? "on" : ""}">Katalog</a><a href="#/library" class="${active === "library" ? "on" : ""}">Bibliothek</a>${isAdminUser && adminView ? `<a href="#/admin" class="admintab ${active === "admin" ? "on" : ""}">🛡️ Admin</a>` : ""}</nav>
     <div class="acct">${
       isAdminUser
         ? `<button id="adminToggle" class="admintoggle ${adminView ? "is-admin" : "is-user"}" title="Ansicht wechseln: Admin / Benutzer" aria-pressed="${adminView}">${adminView ? "ADMIN" : "USER"}</button>`
@@ -288,49 +290,16 @@ async function renderLibrary() {
 /* ---------- Katalog ---------- */
 async function renderCatalog() {
   const d = await load();
-  const admin = isAdminUser && adminView;
-  const reports = admin ? await listReports().catch(() => []) : [];
   setBackground(d);
   const items = d.catalog;
   const inLib = new Set(d.entries.map((e) => e.key));
 
   const groups = CORE_ORDER.map((core) => ({ core, roms: items.filter((r) => r.system === core) })).filter((g) => g.roms.length);
-  const coreOptions = CORE_ORDER.map((c) => `<option value="${c}">${esc(CORE_LABELS[c])}</option>`).join("");
-
   app.innerHTML = `${header("catalog")}
   <main>
     <div class="intro"><b>ROM-Katalog</b><br>
       <span class="muted">Hier findest du ausschließlich selbst erstellte oder frei lizenzierte ROMs (Homebrew). Etwas gefunden, das hier nicht hingehört? Nutze „Melden“, wir prüfen es und entfernen es bei Bedarf.</span></div>
     ${d.err ? `<p class="warn">Katalog konnte nicht geladen werden: ${esc(d.err)}</p>` : ""}
-    ${
-      admin
-        ? `<details class="group admin"><summary><b>Admin: ROM hinzufügen</b></summary>
-      <form id="adminform" class="adminform">
-        <input name="title" placeholder="Titel" required maxlength="120" />
-        <input name="author" placeholder="Autor / Studio" required maxlength="120" />
-        <select name="license" required>${LICENSES.map((l) => `<option>${esc(l)}</option>`).join("")}</select>
-        <textarea name="description" placeholder="Beschreibung (optional)" maxlength="1000"></textarea>
-        <label>ROM-Datei (max. 50 MB)<input type="file" name="rom" accept="${ACCEPT}" required /></label>
-        <label>Emulator<select name="system">${coreOptions}</select></label>
-        <label>Cover-Bild (optional)<input type="file" name="cover" accept="image/*" /></label>
-        <label class="check"><input type="checkbox" name="rights" required /> Ich bestätige, dass ich Rechteinhaber bin oder die Datei unter der gewählten Lizenz frei verteilen darf.</label>
-        <button class="primary" type="submit">Hochladen</button>
-        <div id="adminmsg" class="muted" role="status"></div>
-      </form></details>
-      ${
-        reports.length
-          ? `<details class="group" open><summary><b>Meldungen</b><span class="count">${reports.length}</span></summary>
-        <ul class="games">${reports
-          .map((r) => {
-            const rom = items.find((i) => i.id === r.rom_id);
-            return `<li><div class="info"><b>${esc(rom?.title ?? "Eintrag")}</b><br><span class="muted">${esc(r.reason)}</span></div>
-            <div class="row">${rom ? `<button data-catdel="${rom.id}" title="Eintrag löschen">Löschen</button>` : ""}<button data-dismiss="${r.id}">Erledigt</button></div></li>`;
-          })
-          .join("")}</ul></details>`
-          : ""
-      }`
-        : ""
-    }
     <div class="filters"><input id="q" type="search" placeholder="Katalog durchsuchen …" /></div>
     ${
       groups.length
@@ -348,7 +317,6 @@ async function renderCatalog() {
                 <button data-play="${r.id}" class="primary">Spielen</button>
                 ${inLib.has(r.id) ? '<span class="badge">✓ In Bibliothek</span>' : `<button data-catadd="${r.id}" title="Zur Bibliothek hinzufügen">＋</button>`}
                 <button data-report="${r.id}" title="Problem melden">⚑</button>
-                ${admin ? `<button data-catdel="${r.id}" title="Löschen (Admin)">✕</button>` : ""}
               </div></li>`;
           })
           .join("")}</ul></details>`,
@@ -392,6 +360,77 @@ async function renderCatalog() {
       }
     }),
   );
+}
+
+/* ---------- Admin-Tab: ROM hinzufügen (liest Infos aus dem ROM-Header) ---------- */
+let adminFlash = "";
+
+async function renderAdmin() {
+  if (!(isAdminUser && adminView)) {
+    if (location.hash !== "#/catalog") location.hash = "#/catalog";
+    else return renderCatalog();
+    return;
+  }
+  const d = await load();
+  const reports = await listReports().catch(() => []);
+  setBackground(d);
+  const items = d.catalog;
+  const coreOptions = CORE_ORDER.map((c) => `<option value="${c}">${esc(CORE_LABELS[c])}</option>`).join("");
+
+  app.innerHTML = `${header("admin")}
+  <main>
+    ${adminFlash ? `<p class="ok">${esc(adminFlash)}</p>` : ""}
+    ${d.err ? `<p class="warn">Daten konnten nicht geladen werden: ${esc(d.err)}</p>` : ""}
+    <section>
+      <h2>ROM hinzufügen</h2>
+      <form id="adminform" class="adminform panel">
+        <label class="drop">
+          <strong>ROM-Datei wählen</strong>
+          <span class="muted">Titel, Konsole, Region, Version und Hersteller werden aus dem ROM-Header gelesen (max. 50 MB).</span>
+          <input type="file" name="rom" accept="${ACCEPT}" required />
+        </label>
+        <div id="rominfo" class="rominfo hidden" aria-live="polite"></div>
+        <div id="coverbox" class="coverbox hidden"><img id="coverimg" alt="Cover aus der ROM" />
+          <label class="check"><input type="checkbox" id="useicon" checked /> Icon aus der ROM als Cover verwenden</label></div>
+        <input name="title" placeholder="Titel" required maxlength="120" />
+        <input name="author" placeholder="Autor / Studio" required maxlength="120" />
+        <label>Lizenz<select name="license" required>${LICENSES.map((l) => `<option>${esc(l)}</option>`).join("")}</select></label>
+        <label>Emulator<select name="system">${coreOptions}</select></label>
+        <textarea name="description" placeholder="Beschreibung (optional)" maxlength="1000"></textarea>
+        <label>Eigenes Cover-Bild (optional, ersetzt das Icon)<input type="file" name="cover" accept="image/*" /></label>
+        <label class="check"><input type="checkbox" name="rights" required /> Ich bestätige, dass ich Rechteinhaber bin oder die Datei unter der gewählten Lizenz frei verteilen darf.</label>
+        <button class="primary" type="submit">Hochladen</button>
+        <div id="adminmsg" class="muted" role="status"></div>
+      </form>
+    </section>
+    ${
+      reports.length
+        ? `<section><h2>Meldungen <span class="count">${reports.length}</span></h2><ul class="games">${reports
+            .map((r) => {
+              const rom = items.find((i) => i.id === r.rom_id);
+              return `<li><div class="info"><b>${esc(rom?.title ?? "Eintrag")}</b><br><span class="muted">${esc(r.reason)}</span></div>
+              <div class="row">${rom ? `<button data-catdel="${rom.id}" title="Eintrag löschen">Löschen</button>` : ""}<button data-dismiss="${r.id}">Erledigt</button></div></li>`;
+            })
+            .join("")}</ul></section>`
+        : ""
+    }
+    <section>
+      <h2>Katalog verwalten <span class="count">${items.length}</span></h2>
+      ${
+        items.length
+          ? `<ul class="games">${items
+              .map(
+                (r) => `<li><div class="thumb" style="${artStyle(r.title, d.covers.get(r.id))}"></div>
+              <div class="info"><b>${esc(r.title)}</b><br><span class="muted">${esc(CORE_LABELS[r.system] ?? r.system)} · ${esc(r.author)} · ${esc(r.license)} · ${fmtMB(r.size)}</span></div>
+              <div class="row"><button data-catdel="${r.id}" title="Löschen">✕</button></div></li>`,
+              )
+              .join("")}</ul>`
+          : '<p class="muted">Der Katalog ist noch leer.</p>'
+      }
+    </section>
+  </main>`;
+  adminFlash = "";
+  wireCommon();
 
   app.querySelectorAll<HTMLElement>("[data-catdel]").forEach((b) =>
     b.addEventListener("click", async () => {
@@ -405,7 +444,6 @@ async function renderCatalog() {
       }
     }),
   );
-
   app.querySelectorAll<HTMLElement>("[data-dismiss]").forEach((b) =>
     b.addEventListener("click", async () => {
       await dismissReport(b.dataset.dismiss!);
@@ -413,20 +451,84 @@ async function renderCatalog() {
     }),
   );
 
-  const form = document.getElementById("adminform") as HTMLFormElement | null;
-  form?.addEventListener("change", (e) => {
+  const form = document.getElementById("adminform") as HTMLFormElement;
+  const panel = document.getElementById("rominfo")!;
+  const coverBox = document.getElementById("coverbox")!;
+  const coverImg = document.getElementById("coverimg") as HTMLImageElement;
+  const useIcon = document.getElementById("useicon") as HTMLInputElement;
+  let iconBlob: Blob | null = null;
+  let iconUrl = "";
+
+  const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+  const AUTO = ["title", "author", "description"];
+  // Automatisch gefüllte Felder werden bei einer neuen Datei ersetzt, selbst getippte Werte bleiben.
+  const fill = (name: string, val?: string) => {
+    if (!val) return;
+    const el = field(name);
+    if (!el.value || el.dataset.auto === el.value) {
+      el.value = val;
+      el.dataset.auto = val;
+    }
+  };
+  const showInfo = (file: File, info: RomInfo) => {
+    const rows: [string, string | undefined][] = [
+      ["Konsole", info.consoleLabel],
+      ["Interner Titel", info.title],
+      ["Spielcode", info.code],
+      ["Hersteller", info.maker],
+      ["Region", info.region],
+      ["Version", info.version],
+      ...info.details,
+      ["Dateigröße", fmtMB(file.size)],
+      ["SHA-1", info.sha1 ? info.sha1.slice(0, 12) + "…" : undefined],
+    ];
+    const dup = items.find((r) => r.system === info.core && tidyTitle(info.title, file.name).toLowerCase() === r.title.toLowerCase());
+    panel.innerHTML = `<b>${info.headerOk ? "✓ ROM-Header gelesen" : "⚠ Kein gültiger ROM-Header gefunden"}</b>
+      <dl>${rows.filter((r) => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v!)}</dd>`).join("")}</dl>
+      ${[...info.notes, ...(dup ? [`Ein Eintrag „${dup.title}“ existiert für diese Konsole bereits.`] : [])].map((n) => `<p class="warn">${esc(n)}</p>`).join("")}`;
+    panel.classList.remove("hidden");
+  };
+
+  form.addEventListener("change", async (e) => {
     const t = e.target as HTMLInputElement;
-    if (t.name === "rom" && t.files?.[0]) {
-      const sys = systemFor(t.files[0].name);
-      if (sys) (form.elements.namedItem("system") as HTMLSelectElement).value = sys.core;
+    if (t.name !== "rom" || !t.files?.[0]) return;
+    const file = t.files[0];
+    panel.classList.remove("hidden");
+    panel.textContent = "Lese ROM-Header …";
+    for (const n of AUTO) {
+      const el = field(n);
+      if (el.dataset.auto === el.value) el.value = "";
+      delete el.dataset.auto;
+    }
+    const info = await readRomInfo(file);
+    showInfo(file, info);
+    if (info.core) (field("system") as HTMLSelectElement).value = info.core;
+    fill("title", tidyTitle(info.title, file.name));
+    fill("author", info.maker);
+    fill("description", [info.region && `Region: ${info.region}`, info.version && `Version ${info.version}`, info.code && `Code ${info.code}`].filter(Boolean).join(" · "));
+    if (iconUrl) URL.revokeObjectURL(iconUrl);
+    iconBlob = null;
+    coverBox.classList.add("hidden");
+    if (info.iconRgba) {
+      try {
+        iconBlob = await renderIconCover(info.iconRgba);
+        iconUrl = URL.createObjectURL(iconBlob);
+        coverImg.src = iconUrl;
+        useIcon.checked = true;
+        coverBox.classList.remove("hidden");
+      } catch {
+        /* Cover bleibt optional */
+      }
     }
   });
-  form?.addEventListener("submit", async (e) => {
+
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const msg = document.getElementById("adminmsg")!;
     const fd = new FormData(form);
     const rom = fd.get("rom") as File;
-    const cover = fd.get("cover") as File;
+    const own = fd.get("cover") as File;
+    const cover = own && own.size ? own : iconBlob && useIcon.checked ? new File([iconBlob], "cover.png", { type: "image/png" }) : undefined;
     msg.textContent = "Lade hoch …";
     try {
       await adminUpload({
@@ -436,8 +538,9 @@ async function renderCatalog() {
         description: String(fd.get("description") ?? "").trim(),
         system: String(fd.get("system")),
         rom,
-        cover: cover && cover.size ? cover : undefined,
+        cover,
       });
+      adminFlash = `✓ „${String(fd.get("title")).trim()}“ wurde in den Katalog hochgeladen.`;
       await render();
     } catch (err2) {
       msg.textContent = (err2 as Error).message;
@@ -503,6 +606,7 @@ async function render() {
     return renderLogin();
   }
   if (signedIn && !adminChecked) await refreshAdmin();
+  if (location.hash.startsWith("#/admin")) return renderAdmin();
   if (location.hash.startsWith("#/catalog")) return renderCatalog();
   return location.hash.startsWith("#/library") ? renderLibrary() : renderHome();
 }

@@ -105,3 +105,19 @@ dialog.ask::backdrop { background: rgba(0, 0, 0, .6); backdrop-filter: blur(4px)
 dialog.ask form { display: grid; gap: 12px; } dialog.ask h2 { margin: 0; } dialog.ask p { margin: 0; line-height: 1.5; }
 dialog.ask .row { display: flex; gap: 8px; } dialog.ask .row button { flex: 1; }
 .player { z-index: 20; } dialog.ask { z-index: 40; }
+
+/* Admin-Tab */
+.admintab { color: #ff8080 !important; }
+.admintab.on { background: rgba(255, 77, 77, .14) !important; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px; backdrop-filter: blur(8px); }
+.adminform { padding: 14px; }
+.rominfo { padding: 12px; border-radius: 12px; background: rgba(0, 0, 0, .3); border: 1px solid var(--line); display: grid; gap: 6px; }
+.rominfo dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+.rominfo dt { color: var(--muted); } .rominfo dd { margin: 0; overflow-wrap: anywhere; }
+.rominfo p { margin: 0; }
+.coverbox { display: flex; gap: 12px; align-items: center; }
+.coverbox img { width: 96px; height: 96px; border-radius: 12px; image-rendering: pixelated; border: 1px solid var(--line); }
+.ok { color: #4ade80; background: rgba(74, 222, 128, .1); border: 1px solid rgba(74, 222, 128, .4); border-radius: 12px; padding: 10px 12px; margin: 0; }
+.adminform .drop input { margin-top: 8px; max-width: 100%; }
+@media (max-width: 480px) { .top nav a.admintab { padding: 8px 6px; } }
+.adminform input:not([type="checkbox"]), .adminform select, .adminform textarea { width: 100%; max-width: 100%; }
