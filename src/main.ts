@@ -598,7 +598,20 @@ function ask(title: string, text: string, yes: string, no: string): Promise<bool
   });
 }
 
+let renderSeq = 0;
+/** Zeigt beim Seitenwechsel einen Drehkreis in der Mitte, bis die Daten da sind. */
 async function render() {
+  if (session) return;
+  const mine = ++renderSeq;
+  app.classList.add("busy");
+  try {
+    await renderRoute();
+  } finally {
+    if (mine === renderSeq) app.classList.remove("busy");
+  }
+}
+
+async function renderRoute() {
   if (session) return;
   if (cloudConfigured && !signedIn) {
     adminChecked = false;
@@ -627,13 +640,47 @@ async function checkAchievements(sessionSeconds: number) {
 async function play(romId: string) {
   app.innerHTML = `
     <div class="player">
-      <div class="bar"><button id="back">← Beenden</button><span id="status" class="muted">Lade ROM …</span></div>
+      <div class="bar"><button id="back">← Beenden</button><span id="status" class="muted"></span></div>
       <div id="screen"></div>
+      <div id="loading" class="loading" role="status" aria-live="polite">
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="loadmsg">Spiel wird vorbereitet …</p>
+        <div id="progress" class="progress hidden"><i id="progressbar"></i></div>
+      </div>
     </div>`;
   const status = document.getElementById("status")!;
-  const back = document.getElementById("back")!;
+  const loading = document.getElementById("loading")!;
+  const msgEl = document.getElementById("loadmsg")!;
+  const progress = document.getElementById("progress")!;
+  const bar = document.getElementById("progressbar")!;
+
+  // Ladeanzeige in der Bildschirmmitte, damit niemand denkt, die Seite hängt.
+  const setLoad = (msg: string, fraction?: number) => {
+    loading.classList.remove("hidden");
+    msgEl.textContent = msg;
+    progress.classList.toggle("hidden", fraction === undefined);
+    if (fraction !== undefined) bar.style.width = `${Math.round(fraction * 100)}%`;
+  };
+  const hideLoad = () => loading.classList.add("hidden");
+  const fail = (msg: string) => {
+    loading.classList.remove("hidden");
+    loading.classList.add("error");
+    loading.innerHTML = `<p class="errmsg">⚠️ ${esc(msg)}</p><button id="errback" class="primary">Zurück</button>`;
+    document.getElementById("errback")!.addEventListener("click", () => location.reload());
+  };
+
   let leave = () => location.reload();
-  back.addEventListener("click", () => leave());
+  document.getElementById("back")!.addEventListener("click", () => leave());
+  let ready = false;
+  let slowTimer = 0;
+  let giveUpTimer = 0;
+  const onReady = () => {
+    ready = true;
+    window.clearTimeout(slowTimer);
+    window.clearTimeout(giveUpTimer);
+    hideLoad();
+  };
+
   try {
     const catalog = await listCatalog();
     const rom = catalog.find((r) => r.id === romId);
@@ -644,11 +691,12 @@ async function play(romId: string) {
     let blob: Blob;
     if (hit && hit.size === rom.size) {
       blob = hit.blob;
-      status.textContent = "ROM aus dem Cache …";
+      setLoad("ROM wird aus dem Cache geladen …");
     } else {
       if (hit) await removeCached(rom.id); // veraltet (Katalogeintrag wurde ersetzt)
       let pref = getPref(rom.id);
       if (!pref) {
+        hideLoad();
         const yes = await ask(
           "ROM im Cache speichern?",
           `„${rom.title}“ (${fmtMB(rom.size)}) im Browser-Cache speichern? Dann startet das Spiel schneller und spart Datenvolumen, und du kannst es später ohne erneuten Download spielen. Bei „Nein“ wird die ROM nur kurz im Arbeitsspeicher gehalten. Spielstände liegen in jedem Fall in der Datenbank.`,
@@ -658,24 +706,37 @@ async function play(romId: string) {
         pref = yes ? "yes" : "no";
         setPref(rom.id, pref);
       }
-      status.textContent = "Lade ROM …";
-      blob = await downloadCatalogRom(rom);
+      setLoad(`„${rom.title}“ wird geladen … 0 %`, 0);
+      blob = await downloadCatalogRom(rom, (f) => setLoad(`„${rom.title}“ wird geladen … ${Math.round(f * 100)} %`, f));
       if (pref === "yes") {
+        setLoad("ROM wird im Cache gespeichert …");
         const ok = await putCached(rom.id, blob);
         if (!ok) status.textContent = "Cache nicht verfügbar, die ROM wird nur für diese Sitzung verwendet.";
       }
     }
-    status.textContent = "Starte …";
-    session = await startGame({ key: rom.id, title: rom.title, core: rom.system }, blob, document.getElementById("screen")!, signedIn, (m) => (status.textContent = m));
+    setLoad("Spielstand wird geladen …");
+    session = await startGame(
+      { key: rom.id, title: rom.title, core: rom.system },
+      blob,
+      document.getElementById("screen")!,
+      signedIn,
+      (m) => (loading.classList.contains("hidden") ? (status.textContent = m) : setLoad(m)),
+      onReady,
+    );
+    if (!ready) {
+      setLoad("Emulator wird gestartet … (beim ersten Mal wird der Emulator-Kern geladen)");
+      slowTimer = window.setTimeout(() => !ready && setLoad("Das dauert länger als üblich. Bitte noch einen Moment Geduld …"), 25_000);
+      giveUpTimer = window.setTimeout(() => hideLoad(), 90_000); // danach zeigt der Emulator seine eigenen Meldungen
+    }
     leave = async () => {
       const secs = session?.seconds() ?? 0;
-      status.textContent = "Speichere …";
+      setLoad("Spielstand wird gespeichert … bitte kurz warten");
       await checkAchievements(secs).catch(() => undefined);
       if (session) await session.stop(); // lädt die Seite neu
       else location.reload();
     };
   } catch (e) {
-    status.textContent = (e as Error).message;
+    fail((e as Error).message);
   }
 }
 

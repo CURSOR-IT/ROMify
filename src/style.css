@@ -121,3 +121,17 @@ dialog.ask .row { display: flex; gap: 8px; } dialog.ask .row button { flex: 1; }
 .adminform .drop input { margin-top: 8px; max-width: 100%; }
 @media (max-width: 480px) { .top nav a.admintab { padding: 8px 6px; } }
 .adminform input:not([type="checkbox"]), .adminform select, .adminform textarea { width: 100%; max-width: 100%; }
+
+/* Ladeanzeigen in der Bildschirmmitte */
+.spinner { width: 56px; height: 56px; border-radius: 50%; border: 5px solid rgba(255, 255, 255, .15); border-top-color: var(--cyan); border-right-color: var(--magenta); animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading { position: absolute; inset: 0; z-index: 5; display: grid; place-content: center; justify-items: center; gap: 18px; padding: 24px; text-align: center; background: rgba(5, 6, 10, .88); }
+.loading p { margin: 0; font-size: 1.1rem; max-width: 32ch; }
+.loading .errmsg { color: #ff9a9a; }
+.progress { width: min(72vw, 320px); height: 8px; border-radius: 99px; background: rgba(255, 255, 255, .12); overflow: hidden; }
+.progress i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--cyan), var(--magenta)); transition: width .15s; }
+.player .bar { position: relative; z-index: 6; }
+.boot { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 16px; color: var(--muted); }
+#app.busy > * { opacity: .55; transition: opacity .2s; pointer-events: none; }
+#app.busy::after { content: ""; position: fixed; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; z-index: 30; border-radius: 50%; border: 4px solid rgba(255, 255, 255, .15); border-top-color: var(--cyan); border-right-color: var(--magenta); animation: spin .9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .spinner, #app.busy::after { animation-duration: 2.4s; } }
