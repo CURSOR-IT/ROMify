@@ -83,3 +83,6 @@ drop policy if exists "own roms delete" on storage.objects;
 
 -- Ersten Admin festlegen (E-Mail anpassen, dann diese Zeile separat ausführen):
 -- insert into public.admins (user_id) select id from auth.users where email = 'DEINE@EMAIL.DE' on conflict do nothing;
+
+-- Supabase-API informieren, dass sich das Schema geändert hat (sonst: "Could not find the ... column in the schema cache").
+notify pgrst, 'reload schema';
