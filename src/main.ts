@@ -65,6 +65,7 @@ async function render() {
       }</div>
     </header>
     <main>
+      <img class="logo" src="/logo.jpg" alt="ROMify – Web-based Emulator" />
       <section>
         <label class="drop">
           <input id="file" type="file" accept="${ACCEPT}" multiple hidden />
