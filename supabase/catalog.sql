@@ -71,5 +71,15 @@ create policy "catalog files insert" on storage.objects for insert to authentica
 create policy "catalog files update" on storage.objects for update to authenticated using (bucket_id = 'catalog' and public.is_admin());
 create policy "catalog files delete" on storage.objects for delete to authenticated using (bucket_id = 'catalog' and public.is_admin());
 
+-- Bibliothek: ROMs liegen NIE im Browser. Die Spieleliste verweist nur auf Katalogeinträge.
+alter table public.games add column if not exists catalog_id uuid references public.catalog_roms(id) on delete set null;
+alter table public.games add column if not exists added_at timestamptz not null default now();
+
+-- Aufräumen: privater Nutzer-ROM-Speicher aus einer früheren Version wird nicht mehr verwendet.
+drop policy if exists "own roms read"   on storage.objects;
+drop policy if exists "own roms write"  on storage.objects;
+drop policy if exists "own roms update" on storage.objects;
+drop policy if exists "own roms delete" on storage.objects;
+
 -- Ersten Admin festlegen (E-Mail anpassen, dann diese Zeile separat ausführen):
 -- insert into public.admins (user_id) select id from auth.users where email = 'DEINE@EMAIL.DE' on conflict do nothing;

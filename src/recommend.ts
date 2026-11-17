@@ -1,5 +1,4 @@
-import type { CloudGame } from "./cloud";
-import type { LocalGame } from "./library";
+import type { CatalogRom } from "./catalog";
 
 const SERIES: [string, string][] = [
   ["pokemon", "Pokémon"],
@@ -14,23 +13,7 @@ const SERIES: [string, string][] = [
   ["dragon quest", "Dragon Quest"],
   ["mega man", "Mega Man"],
   ["castlevania", "Castlevania"],
-  ["donkey kong", "Donkey Kong"],
-  ["resident evil", "Resident Evil"],
 ];
-
-// Nur Titel-Metadaten für Vorschläge. Es werden keine ROMs bereitgestellt.
-const CATALOG: Record<string, string[]> = {
-  pokemon: ["Pokémon Platin (DS)", "Pokémon HeartGold / SoulSilver (DS)", "Pokémon Smaragd (GBA)", "Pokémon Feuerrot / Blattgrün (GBA)", "Pokémon Stadium (N64)"],
-  mario: ["Super Mario 64 (N64)", "New Super Mario Bros. (DS)", "Super Mario World (SNES)", "Mario Kart 64 (N64)", "Super Mario Advance 4 (GBA)"],
-  zelda: ["The Legend of Zelda: Ocarina of Time (N64)", "Majora's Mask (N64)", "A Link to the Past (SNES)", "The Minish Cap (GBA)", "Phantom Hourglass (DS)"],
-  "final fantasy": ["Final Fantasy VII (PS1)", "Final Fantasy IX (PS1)", "Final Fantasy Tactics Advance (GBA)", "Final Fantasy III (DS)"],
-  "kingdom hearts": ["Chain of Memories (GBA)", "358/2 Days (DS)"],
-  sonic: ["Sonic the Hedgehog 2 (Mega Drive)", "Sonic Advance (GBA)"],
-  metroid: ["Metroid Fusion (GBA)", "Super Metroid (SNES)"],
-  kirby: ["Kirby Super Star (SNES)", "Kirby: Nightmare in Dream Land (GBA)"],
-  "fire emblem": ["Fire Emblem (GBA)", "The Sacred Stones (GBA)"],
-  "dragon quest": ["Dragon Quest IX (DS)"],
-};
 
 export interface Series {
   id: string;
@@ -53,50 +36,43 @@ export function seriesOf(title: string): Series | null {
   return first && first.length > 3 ? { id: first, label: first[0].toUpperCase() + first.slice(1) } : null;
 }
 
+/** Eintrag der eigenen Spieleliste (nur Metadaten). */
+export interface Entry {
+  key: string;
+  title: string;
+  core: string;
+  rom?: CatalogRom;
+  lastPlayed?: number;
+  addedAt: number;
+  playtime: number;
+}
+
 export interface Recommendation {
-  game: LocalGame;
+  rom: CatalogRom;
   reason: string;
 }
-export interface Missing {
-  seriesLabel: string;
-  titles: string[];
-}
 
-export function recommend(local: LocalGame[], cloud: CloudGame[]) {
-  const playedKeys = new Set([...cloud.map((c) => c.game_key), ...local.filter((g) => g.lastPlayed).map((g) => g.key)]);
+/** Empfehlungen aus dem Katalog, angepasst an Spielverhalten (Reihe, Konsole, Spielzeit). */
+export function recommend(entries: Entry[], catalog: CatalogRom[]): Recommendation[] {
+  const inLibrary = new Set(entries.map((e) => e.key));
   const seriesWeight = new Map<string, { label: string; w: number }>();
   const coreWeight = new Map<string, number>();
-  const bump = (title: string, core: string, w: number) => {
-    const s = seriesOf(title);
+  for (const e of entries) {
+    const w = 1 + Math.min(5, e.playtime / 3600) + (e.playtime > 0 ? 2 : 0);
+    const s = seriesOf(e.title);
     if (s) seriesWeight.set(s.id, { label: s.label, w: (seriesWeight.get(s.id)?.w ?? 0) + w });
-    coreWeight.set(core, (coreWeight.get(core) ?? 0) + w);
-  };
-  for (const g of local) bump(g.title, g.core, playedKeys.has(g.key) ? 3 : 1);
-  for (const c of cloud) bump(c.title, c.system, 1 + Math.min(5, c.playtime_sec / 3600));
-
-  const unplayed = local.filter((g) => !playedKeys.has(g.key));
-  const scored = unplayed.map((game) => {
-    const s = seriesOf(game.title);
-    const sw = s ? seriesWeight.get(s.id) : undefined;
-    const score = (sw?.w ?? 0) * 10 + (coreWeight.get(game.core) ?? 0);
-    const reason = sw && sw.w > 1 ? `Weil du ${sw.label} spielst` : "Passt zu deinen Konsolen";
-    return { game, reason, score };
-  });
-  scored.sort((a, b) => b.score - a.score || b.game.addedAt - a.game.addedAt);
-  const games: Recommendation[] = scored.slice(0, 12).map(({ game, reason }) => ({ game, reason }));
-
-  const owned = local.map((g) => norm(g.title));
-  const missing: Missing[] = [...seriesWeight.entries()]
-    .filter(([id]) => CATALOG[id])
-    .sort((a, b) => b[1].w - a[1].w)
-    .slice(0, 2)
-    .map(([id, v]) => ({
-      seriesLabel: v.label,
-      titles: CATALOG[id].filter((t) => {
-        const n = norm(t);
-        return !owned.some((o) => o && (o.includes(n) || n.includes(o)));
-      }),
-    }))
-    .filter((m) => m.titles.length);
-  return { games, missing };
+    coreWeight.set(e.core, (coreWeight.get(e.core) ?? 0) + w);
+  }
+  const scored = catalog
+    .filter((r) => !inLibrary.has(r.id))
+    .map((rom) => {
+      const s = seriesOf(rom.title);
+      const sw = s ? seriesWeight.get(s.id) : undefined;
+      const cw = coreWeight.get(rom.system) ?? 0;
+      const score = (sw?.w ?? 0) * 10 + cw;
+      const reason = sw ? `Weil du ${sw.label} spielst` : cw > 0 ? "Passt zu deinen Konsolen" : "Neu im Katalog";
+      return { rom, reason, score };
+    });
+  scored.sort((a, b) => b.score - a.score || +new Date(b.rom.created_at) - +new Date(a.rom.created_at));
+  return scored.slice(0, 12).map(({ rom, reason }) => ({ rom, reason }));
 }
