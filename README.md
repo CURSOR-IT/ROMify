@@ -36,6 +36,22 @@ ROMify liefert **keine Spiele** mit und hostet keine ROMs. Die Dateien liegen au
 - ✅ **Freischaltung:** Neue Konten müssen von einem Admin freigeschaltet werden (mit Zähler am Admin-Tab). Das erzwingt die Datenbank, nicht nur die Oberfläche
 - 🛡️ **Admin-Tab** mit ADMIN/USER-Umschalter: Registrierungen freischalten und Nutzer sperren
 
+## 📸 Screenshots 🖼️
+
+<div align="center">
+
+<img src="docs/screenshots/home.jpg" alt="Hauptmenü mit zuletzt gespielt, neu hinzugefügt und Empfehlungen" width="760" />
+
+<br/>
+
+<img src="docs/screenshots/login.jpg" alt="Anmelden und Registrieren" width="240" />
+&nbsp;&nbsp;&nbsp;
+<img src="docs/screenshots/library.jpg" alt="Bibliothek nach Konsole" width="240" />
+
+<sub>Demo-Spiele zur Veranschaulichung. Links der Login auf dem Handy, rechts die Bibliothek nach Konsole.</sub>
+
+</div>
+
 ## 🕹️ Unterstützte Konsolen 👾
 
 | 🎯 Konsole | 📁 Dateiendungen |
