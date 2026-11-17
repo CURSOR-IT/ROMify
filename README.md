@@ -4,7 +4,8 @@ Webbasierter Retro-Emulator für Handy und PC. Login per E-Mail, Spielstände un
 
 - **Emulation:** [EmulatorJS](https://emulatorjs.org) (WebAssembly), Systeme siehe `src/systems.ts` (NDS, N64, GBA, GB/GBC, NES, SNES, Mega Drive, PSX, …). 3DS wird im Browser nicht unterstützt.
 - **Backend:** Supabase Free-Tier (Auth, Postgres, Storage, Row-Level-Security).
-- **ROMs liegen nie im Browser.** Nur Admins laden ROMs in den Katalog hoch. Beim Spielen wird die ROM aus dem Katalog in den Arbeitsspeicher geladen und danach verworfen. Im Konto gespeichert werden nur Spielstände, Spielzeit, Erfolge und die Spieleliste (Verweise auf Katalogeinträge). Nutzer können keine eigenen ROMs hinzufügen.
+- **ROMs:** Nur Admins laden ROMs in den Katalog hoch, Nutzer können keine eigenen hinzufügen. Beim Spielen wird die ROM aus dem Katalog geladen. Beim ersten Start fragt die App „ROM im Cache speichern? Ja/Nein“. Nur bei „Ja“ wird sie im Browser (IndexedDB) gespeichert, sonst nur im Arbeitsspeicher. Gecachte ROMs lassen sich in der Bibliothek einzeln oder komplett entfernen.
+- **Konto/Datenbank:** Spielstände (Save States), Spielzeit, Erfolge und die Spieleliste liegen in Supabase und sind geräteübergreifend verfügbar. Cookies werden nicht für Spieldaten genutzt.
 - **Oberfläche:** Login-Seite, Hauptmenü (zuletzt gespielt, meine Spiele, neu im Katalog, empfohlen, unterstützte Emulatoren), Katalog, Bibliothek nach Emulator gruppiert. Hintergrund = unscharfes Cover des zuletzt gespielten Spiels. Admins haben oben einen Umschalter ADMIN / USER.
 - **Sync:** Save State pro Spiel (Hash der ROM → geräteübergreifend gleich) alle 60 s, beim Verlassen und beim Tab-Wechsel.
 

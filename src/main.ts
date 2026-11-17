@@ -25,6 +25,7 @@ import {
   type CatalogRom,
 } from "./catalog";
 import { startGame, type Session } from "./emulator";
+import { cacheSizes, clearCache, getCached, getPref, putCached, removeCached, setPref } from "./romcache";
 import { recommend, type Entry } from "./recommend";
 import { ACCEPT, CORE_LABELS, CORE_ORDER, supportedEmulators, systemFor } from "./systems";
 
@@ -244,6 +245,7 @@ async function renderHome() {
 /* ---------- Bibliothek (nur Verweise, keine Dateien) ---------- */
 async function renderLibrary() {
   const d = await load();
+  const cached = await cacheSizes();
   setBackground(d);
   const groups = CORE_ORDER.map((core) => ({
     core,
@@ -253,7 +255,12 @@ async function renderLibrary() {
   app.innerHTML = `${header("library")}
   <main>
     ${d.err ? `<p class="warn">Daten konnten nicht geladen werden: ${esc(d.err)}</p>` : ""}
-    <div class="intro"><b>Meine Bibliothek</b><br><span class="muted">Hier stehen deine Spiele nach Emulator. Die ROMs werden beim Spielen aus dem Katalog geladen und nicht im Browser gespeichert. Gespeichert werden nur deine Spielstände und deine Spielzeit.</span></div>
+    <div class="intro"><b>Meine Bibliothek</b><br><span class="muted">Hier stehen deine Spiele nach Emulator. ROMs werden beim Spielen aus dem Katalog geladen. Nur wenn du beim Start „Ja“ wählst, wird die ROM zusätzlich im Browser-Cache gespeichert. Spielstände, Spielzeit und Erfolge liegen in der Datenbank.</span>
+      ${
+        cached.size
+          ? `<br><span class="muted">Im Cache: ${cached.size} ROM${cached.size === 1 ? "" : "s"} · ${fmtMB([...cached.values()].reduce((a, b) => a + b, 0))}</span> <button id="cacheclear" class="morebtn">Cache leeren</button>`
+          : ""
+      }</div>
     ${
       groups.length
         ? groups
@@ -264,8 +271,9 @@ async function renderLibrary() {
           .map((e) => {
             const cover = e.rom ? d.covers.get(e.rom.id) : undefined;
             return `<li><div class="thumb" style="${artStyle(e.title, cover)}"></div>
-              <div class="info"><b>${esc(e.title)}</b><br><span class="muted">${esc(CORE_LABELS[e.core] ?? e.core)}${e.playtime ? " · " + fmtTime(e.playtime) : ""}${e.rom ? "" : " · nicht mehr im Katalog"}</span></div>
+              <div class="info"><b>${esc(e.title)}</b><br><span class="muted">${esc(CORE_LABELS[e.core] ?? e.core)}${e.playtime ? " · " + fmtTime(e.playtime) : ""}${e.rom ? "" : " · nicht mehr im Katalog"}${cached.has(e.key) ? ' · <span class="badge">💾 im Cache</span>' : ""}</span></div>
               <div class="row">${e.rom ? `<button data-play="${e.rom.id}" class="primary">Spielen</button>` : ""}
+              ${cached.has(e.key) ? `<button data-uncache="${e.key}" title="Aus dem Cache entfernen">💾✕</button>` : ""}
               <button data-rm="${e.key}" title="Aus Bibliothek entfernen">✕</button></div></li>`;
           })
           .join("")}</ul></details>`,
@@ -451,10 +459,39 @@ function wireCommon() {
       }
     }),
   );
+  app.querySelectorAll<HTMLElement>("[data-uncache]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      await removeCached(b.dataset.uncache!);
+      setPref(b.dataset.uncache!, null); // beim nächsten Start wird erneut gefragt
+      await render();
+    }),
+  );
+  document.getElementById("cacheclear")?.addEventListener("click", async () => {
+    if (!confirm("Alle gecachten ROMs aus diesem Browser löschen? Spielstände bleiben in der Datenbank.")) return;
+    await clearCache();
+    for (const e of Object.keys(localStorage)) if (e.startsWith("romify.cache.")) localStorage.removeItem(e);
+    await render();
+  });
   document.getElementById("logout")?.addEventListener("click", async () => {
     await supabase.auth.signOut();
     signedIn = false;
     await render();
+  });
+}
+
+/** Ja/Nein-Abfrage im eigenen Dialog (gibt true bei „Ja“ zurück). */
+function ask(title: string, text: string, yes: string, no: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const dlg = document.createElement("dialog");
+    dlg.className = "ask";
+    dlg.innerHTML = `<form method="dialog"><h2>${esc(title)}</h2><p class="muted">${esc(text)}</p>
+      <div class="row"><button value="yes" class="primary" id="askyes">${esc(yes)}</button><button value="no" id="askno">${esc(no)}</button></div></form>`;
+    dlg.addEventListener("close", () => {
+      resolve(dlg.returnValue === "yes");
+      dlg.remove();
+    });
+    document.body.appendChild(dlg);
+    dlg.showModal();
   });
 }
 
@@ -498,7 +535,32 @@ async function play(romId: string) {
     const rom = catalog.find((r) => r.id === romId);
     if (!rom) throw new Error("Dieses Spiel ist nicht mehr im Katalog.");
     await addToLibrary(rom); // sorgt dafür, dass Spielzeit und Spielstand gespeichert werden
-    const blob = await downloadCatalogRom(rom);
+    // ROM aus dem Cache, sonst aus dem Katalog. Gespeichert wird nur nach ausdrücklichem „Ja“.
+    const hit = await getCached(rom.id);
+    let blob: Blob;
+    if (hit && hit.size === rom.size) {
+      blob = hit.blob;
+      status.textContent = "ROM aus dem Cache …";
+    } else {
+      if (hit) await removeCached(rom.id); // veraltet (Katalogeintrag wurde ersetzt)
+      let pref = getPref(rom.id);
+      if (!pref) {
+        const yes = await ask(
+          "ROM im Cache speichern?",
+          `„${rom.title}“ (${fmtMB(rom.size)}) im Browser-Cache speichern? Dann startet das Spiel schneller und spart Datenvolumen, und du kannst es später ohne erneuten Download spielen. Bei „Nein“ wird die ROM nur kurz im Arbeitsspeicher gehalten. Spielstände liegen in jedem Fall in der Datenbank.`,
+          "Ja, speichern",
+          "Nein",
+        );
+        pref = yes ? "yes" : "no";
+        setPref(rom.id, pref);
+      }
+      status.textContent = "Lade ROM …";
+      blob = await downloadCatalogRom(rom);
+      if (pref === "yes") {
+        const ok = await putCached(rom.id, blob);
+        if (!ok) status.textContent = "Cache nicht verfügbar, die ROM wird nur für diese Sitzung verwendet.";
+      }
+    }
     status.textContent = "Starte …";
     session = await startGame({ key: rom.id, title: rom.title, core: rom.system }, blob, document.getElementById("screen")!, signedIn, (m) => (status.textContent = m));
     leave = async () => {
